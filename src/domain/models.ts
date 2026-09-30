@@ -6,9 +6,39 @@ export interface Authorization {
 
 export interface Person {
   id: number;
+  accessHash?: string;
   nickname: string;
   description: string;
   interests: string[];
+  avatar?: FileDescriptor | null;
+  email?: string | null;
+  socialLink?: string | null;
+  friendship?: 'friends' | 'incomingRequest' | 'outgoingRequest' | 'outgoingDecline' | 'none';
+}
+
+export interface FileDescriptor {
+  id: number;
+  accessHash: string;
+}
+
+export interface ProfileInput {
+  nickname: string;
+  description: string;
+  interests: string[];
+  socialLink: string | null;
+  avatar: FileDescriptor | null;
+}
+
+export interface PersonDetails {
+  user: Person;
+  commonFriends: Person[];
+}
+
+export interface DiscoveryPerson {
+  details: Person;
+  commonFriends: Person[];
+  isRequest: boolean;
+  isExtendedNetwork: boolean;
 }
 
 export interface Post {
@@ -18,6 +48,8 @@ export interface Post {
   owner: Person;
   instant: string;
   deleted?: boolean;
+  edited?: boolean;
+  replyPreviews?: Person[];
 }
 
 export interface ActivityEvent {
@@ -40,6 +72,17 @@ export interface ActivitySnapshot {
 
 export interface Thread {
   post: Post;
-  replies: Post[];
-  hasMore: boolean;
+  upstream: Post[];
+  replies: ReplyBranch[];
+  nextCursor: string | null;
+}
+
+export interface ReplyBranch {
+  type: 'single' | 'thread';
+  posts: Post[];
+}
+
+export interface Page<T> {
+  items: T[];
+  nextCursor: string | null;
 }

@@ -1,7 +1,9 @@
 import { AlertCircle } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Alert, AlertDescription } from './ui/alert';
-import { Avatar as AvatarPrimitive, AvatarFallback } from './ui/avatar';
+import { Avatar as AvatarPrimitive, AvatarFallback, AvatarImage } from './ui/avatar';
+import type { FileDescriptor } from '../domain/models';
+import { useRuntime } from './runtime';
 import { Button } from './ui/button';
 import { Skeleton } from './ui/skeleton';
 
@@ -13,7 +15,7 @@ export function ErrorNotice({ message, onRetry }: { message: string; onRetry?: (
         <p>{message}</p>
         {onRetry && (
           <Button variant="outline" onClick={onRetry}>
-            Повторить
+            Retry
           </Button>
         )}
       </AlertDescription>
@@ -21,9 +23,9 @@ export function ErrorNotice({ message, onRetry }: { message: string; onRetry?: (
   );
 }
 
-export function Loading({ children = 'Загружаем…' }: { children?: ReactNode }) {
+export function Loading({ children = 'Loading…' }: { children?: ReactNode }) {
   return (
-    <div className="space-y-6 py-8" role="status">
+    <div className="space-y-3 py-4" role="status">
       <span className="muted text-sm">{children}</span>
       <div className="flex gap-4" aria-hidden="true">
         <Skeleton className="size-11 rounded-full shrink-0" />
@@ -37,11 +39,13 @@ export function Loading({ children = 'Загружаем…' }: { children?: Rea
   );
 }
 
-export function Avatar({ name }: { name: string }) {
+export function Avatar({ name, file }: { name: string; file?: FileDescriptor | null }) {
+  const { gateway } = useRuntime();
   return (
     <AvatarPrimitive className="avatar" aria-hidden="true">
+      {file && <AvatarImage src={gateway.fileUrl(file)} alt="" width={80} height={80} />}
       <AvatarFallback className="text-sm font-medium">
-        {name.trim().slice(0, 1).toLocaleUpperCase('ru') || '?'}
+        {name.trim().slice(0, 1).toLocaleUpperCase('en') || '?'}
       </AvatarFallback>
     </AvatarPrimitive>
   );

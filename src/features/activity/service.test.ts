@@ -10,14 +10,10 @@ const event = (id: number, isRead = false): ActivityEvent => ({
   kind: 'unknown',
   instant: '2026-09-30T12:00:00Z',
 });
-function gateway(pages: ActivityPage[]): FriendlyGateway {
+function gateway(pages: ActivityPage[]): Pick<FriendlyGateway, 'activityPage' | 'readActivity'> {
   return {
     activityPage: vi.fn(async () => pages.shift()!),
     readActivity: vi.fn(async () => {}),
-    profile: vi.fn(),
-    login: vi.fn(),
-    sendLoginCode: vi.fn(),
-    thread: vi.fn(),
   };
 }
 
@@ -51,7 +47,7 @@ describe('activity pagination and counters', () => {
       { items: [event(2)], nextCursor: 'same' },
       { items: [event(1)], nextCursor: 'same' },
     ]);
-    await expect(loadActivity(api)).rejects.toThrow('повторяет страницу');
+    await expect(loadActivity(api)).rejects.toThrow('returned the same page twice');
   });
   it('honors cancellation before sending another page request', async () => {
     const api = gateway([]);

@@ -1,5 +1,4 @@
-'use client';
-
+import { usePreferences } from '../preferences';
 import { Toaster as Sonner, type ToasterProps } from 'sonner';
 import {
   CircleCheckIcon,
@@ -10,9 +9,11 @@ import {
 } from 'lucide-react';
 
 const Toaster = ({ ...props }: ToasterProps) => {
+  const { theme } = usePreferences();
+
   return (
     <Sonner
-      theme="light"
+      theme={theme === 'system' && typeof window.matchMedia !== 'function' ? 'light' : theme}
       className="toaster group"
       icons={{
         success: <CircleCheckIcon className="size-4" />,
@@ -30,7 +31,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
         } as React.CSSProperties
       }
       toastOptions={{
-        closeButtonAriaLabel: 'Закрыть уведомление',
+        closeButtonAriaLabel: 'Dismiss notification',
         classNames: {
           toast: 'cn-toast',
           actionButton: 'h-11!',

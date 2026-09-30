@@ -1,0 +1,16 @@
+{
+  "date": "2026-09-30",
+  "framework": "React 19 with Vite 8 and Tailwind 4",
+  "sources": ["package.json", "src/app/styles.css", "src/shared/ui"],
+  "originalFonts": "System sans body; Georgia available as serif token",
+  "originalPalette": "White and cool neutrals with Friendly blue accent",
+  "motion": "No dedicated animation library; Radix and Tailwind primitive transitions",
+  "spacing": "Tailwind spacing with screen composition in CSS",
+  "preserved": [
+    "Friendly blue",
+    "system body typography",
+    "shadcn primitives",
+    "route and feature ownership"
+  ],
+  "system": "design.md"
+}

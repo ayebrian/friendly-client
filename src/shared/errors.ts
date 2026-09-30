@@ -11,5 +11,5 @@ export class ApiError extends Error {
 export function errorMessage(error: unknown): string {
   return error instanceof Error
     ? error.message
-    : 'Не удалось выполнить запрос. Попробуйте ещё раз.';
+    : 'Could not complete the request. Please try again.';
 }

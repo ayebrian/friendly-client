@@ -4,6 +4,9 @@ import type { FriendlyGateway } from '../domain/gateway';
 export interface Runtime {
   gateway: FriendlyGateway;
   isDemo: boolean;
+  userId: number;
+  enablePush: () => Promise<void>;
+  disablePush: () => Promise<void>;
   logout: () => void;
   simulate?: () => void;
 }

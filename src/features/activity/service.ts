@@ -4,7 +4,7 @@ import { ApiError } from '../../shared/errors';
 
 /** No count endpoint exists: count is exact only after exhausting pagination. */
 export async function loadActivity(
-  gateway: FriendlyGateway,
+  gateway: Pick<FriendlyGateway, 'activityPage'>,
   signal?: AbortSignal,
   pageLimit = 20,
 ): Promise<ActivitySnapshot> {
@@ -18,7 +18,7 @@ export async function loadActivity(
     cursor = result.nextCursor;
     if (cursor === null) return { items: [...events.values()], complete: true };
     if (cursors.has(cursor))
-      throw new ApiError(502, 'Не удалось загрузить историю: Friendly повторяет страницу.');
+      throw new ApiError(502, 'Could not load history: Friendly returned the same page twice.');
     cursors.add(cursor);
   }
   return { items: [...events.values()], complete: false };
@@ -34,7 +34,11 @@ export function countLabel(snapshot?: ActivitySnapshot) {
   return snapshot.complete ? (count > 99 ? '99+' : String(count)) : `${Math.min(count, 99)}+`;
 }
 
-export async function markRead(gateway: FriendlyGateway, ids: number[], signal?: AbortSignal) {
+export async function markRead(
+  gateway: Pick<FriendlyGateway, 'readActivity'>,
+  ids: number[],
+  signal?: AbortSignal,
+) {
   const failed: number[] = [];
   for (const id of ids) {
     signal?.throwIfAborted();
@@ -51,6 +55,8 @@ export async function markRead(gateway: FriendlyGateway, ids: number[], signal?:
 
 export class ReadError extends Error {
   constructor(public readonly failedIds: number[]) {
-    super('Не удалось отметить часть уведомлений. Их статус восстановлен; попробуйте ещё раз.');
+    super(
+      'Some notifications could not be marked as read. Their status has been restored. Please try again.',
+    );
   }
 }
