@@ -186,6 +186,7 @@ function SessionApp({
     return {
       gateway,
       mediaBaseUrl: baseUrl,
+      imageProxyUrl: import.meta.env.VITE_IMAGE_PROXY_URL || undefined,
       isDemo: false,
       userId: session.authorization.id,
       logout: () => {

@@ -60,6 +60,9 @@ npm run dev
 `/files/download/` настроенного API Friendly, медиа того же origin и локальные
 blob-превью открываются сразу. При ошибке доступна повторная попытка. Одобрение
 сохраняется при обновлении поста, но изменение URL требует нового нажатия.
+Если настроен image proxy, внешние HTTPS-картинки загружаются автоматически через
+него. Ошибка proxy оставляет кнопку Retry; прямой загрузки в обход proxy нет.
+Видео и аудио продолжают требовать нажатия.
 
 Редактор использует rich contenteditable с вводом обычного текста, поскольку Chromium
 предлагает Android-клавиатуре вставку изображений только в richly editable поле.
@@ -67,14 +70,33 @@ blob-превью открываются сразу. При ошибке дос�
 вставка Ctrl+V и сценарий событий Android в Chromium на 1440/360px; физическое
 устройство с Gboard не проверено.
 
+## Image proxy на Workers
+
+Worker и инструкция публикации находятся в [workers/image-proxy](workers/image-proxy/README.md).
+Он принимает публичные HTTPS-изображения с любых доменов, проверяет DNS, redirects,
+тип и сигнатуру файла, передаёт тело потоком и ограничивает размер до 5 MB.
+Поддерживает PNG, JPEG, GIF, WebP и AVIF. Данные авторизации клиента в источник не отправляются.
+
+```sh
+npm run proxy:dev
+VITE_IMAGE_PROXY_URL=http://127.0.0.1:8787/image npm run dev -- --port 5176
+```
+
+Для production сначала опубликовать Worker в аккаунте Friendly, затем установить
+`VITE_IMAGE_PROXY_URL` в Pages на адрес Worker с путём `/image` и пересобрать клиент.
+Пустая настройка сохраняет загрузку внешних медиа по нажатию.
+
 ## Проверки
 
 ```sh
 npm run check
 npm run build
+npm run proxy:build
 ```
 
 GitHub Actions запускает те же проверки на push в main и на pull request.
+`check` включает тесты Worker в runtime Cloudflare; `proxy:build` проверяет
+типы и упаковку с `wrangler deploy --dry-run`, без публикации.
 
 ## Заголовки production
 

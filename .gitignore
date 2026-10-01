@@ -7,3 +7,6 @@ dist/
 output/
 .playwright-cli/
 .playwright-mcp/
+.wrangler/
+.dev.vars*
+workers/image-proxy/worker-configuration.d.ts

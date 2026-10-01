@@ -1,0 +1,43 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "friendly-image-proxy",
+  "account_id": "01bfd1aca32d255a115b04fdd0351f97",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "cache": { "enabled": true },
+  "exports": {
+    "default": { "type": "worker", "cache": { "enabled": false } },
+    "ImageCache": { "type": "worker", "cache": { "enabled": true } },
+  },
+  "vars": {
+    "APP_ORIGINS": ["https://friendly.hausmer.com", "https://friendly-client.pages.dev"],
+  },
+  "ratelimits": [
+    {
+      "name": "IMAGE_RATE_LIMITER",
+      "namespace_id": "11371",
+      "simple": { "limit": 300, "period": 60 },
+    },
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "invocation_logs": false, "head_sampling_rate": 1 },
+    // Automatic spans record full source URLs, including signed image query tokens.
+    "traces": { "enabled": false },
+  },
+  "env": {
+    "local": {
+      "vars": { "APP_ORIGINS": ["http://127.0.0.1:5176", "http://127.0.0.1:5177"] },
+      "ratelimits": [
+        {
+          "name": "IMAGE_RATE_LIMITER",
+          "namespace_id": "11371",
+          "simple": { "limit": 300, "period": 60 },
+        },
+      ],
+    },
+  },
+}

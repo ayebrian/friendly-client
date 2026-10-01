@@ -7,6 +7,7 @@ import type { Plugin } from 'vite';
 export function securityHeaders(): Plugin {
   let outputDirectory = '';
   let apiOrigin = '';
+  let proxyOrigin = '';
   return {
     name: 'friendly-security-headers',
     configResolved(config) {
@@ -15,6 +16,24 @@ export function securityHeaders(): Plugin {
       if (!['https:', 'http:'].includes(api.protocol) || api.username || api.password)
         throw new Error('VITE_API_BASE_URL must be a public HTTP(S) API URL.');
       apiOrigin = api.origin;
+      const proxyUrl = config.env.VITE_IMAGE_PROXY_URL;
+      if (proxyUrl) {
+        const proxy = new URL(proxyUrl);
+        const localHttp =
+          proxy.protocol === 'http:' &&
+          ['localhost', '127.0.0.1', '[::1]'].includes(proxy.hostname);
+        if (
+          (!localHttp && proxy.protocol !== 'https:') ||
+          proxy.username ||
+          proxy.password ||
+          proxy.search ||
+          proxy.hash
+        )
+          throw new Error(
+            'VITE_IMAGE_PROXY_URL must be an HTTPS endpoint (or local HTTP for development), without credentials, query or fragment.',
+          );
+        proxyOrigin = proxy.origin;
+      }
     },
     generateBundle: {
       order: 'post',
@@ -35,7 +54,7 @@ export function securityHeaders(): Plugin {
           // Inline styles are allowed; executable inline scripts remain hash-restricted.
           "style-src 'self' 'unsafe-inline'",
           "font-src 'self'",
-          `img-src 'self' blob: https: ${apiOrigin}`,
+          `img-src 'self' blob: https: ${apiOrigin}${proxyOrigin ? ` ${proxyOrigin}` : ''}`,
           `media-src 'self' blob: https: ${apiOrigin}`,
           `connect-src 'self' ${apiOrigin} https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com`,
           "worker-src 'self'",

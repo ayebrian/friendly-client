@@ -39,13 +39,17 @@ export function MediaContent({
   const [attempt, setAttempt] = useState(0);
   const source = src && mediaSource(src, runtime?.mediaBaseUrl);
   if (!source) return null;
-  if (failed || (!source.trusted && !approved))
+  const proxy =
+    kind === 'image' && !source.trusted && source.url.protocol === 'https:'
+      ? runtime?.imageProxyUrl
+      : undefined;
+  if (failed || (!source.trusted && !proxy && !approved))
     return (
       <span className="external-media">
         <span className="external-media-description">
           <strong>{failed ? `Could not load ${kind}` : `External ${kind}`}</strong>
           <span>{source.url.hostname}</span>
-          {!source.trusted && <span>Loading this media connects to that site.</span>}
+          {!source.trusted && !proxy && <span>Loading this media connects to that site.</span>}
         </span>
         <Button
           variant="outline"
@@ -59,7 +63,9 @@ export function MediaContent({
         </Button>
       </span>
     );
-  const url = source.url.href;
+  const proxied = proxy ? new URL(proxy, window.location.href) : null;
+  proxied?.searchParams.set('url', source.url.href);
+  const url = proxied?.href ?? source.url.href;
   const onError = () => setFailed(true);
   if (kind === 'audio')
     return <audio key={attempt} src={url} controls preload="none" onError={onError} />;
@@ -81,6 +87,7 @@ export function MediaContent({
             alt={alt ?? ''}
             loading="lazy"
             referrerPolicy="no-referrer"
+            crossOrigin={proxied ? 'anonymous' : undefined}
             onError={onError}
           />
         </Button>
@@ -88,7 +95,13 @@ export function MediaContent({
       <DialogContent className="image-dialog">
         <DialogTitle>{alt || 'Image'}</DialogTitle>
         <DialogDescription className="sr-only">View the image at full size</DialogDescription>
-        <img src={url} alt={alt ?? ''} referrerPolicy="no-referrer" onError={onError} />
+        <img
+          src={url}
+          alt={alt ?? ''}
+          referrerPolicy="no-referrer"
+          crossOrigin={proxied ? 'anonymous' : undefined}
+          onError={onError}
+        />
       </DialogContent>
     </Dialog>
   );

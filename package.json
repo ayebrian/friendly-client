@@ -3,11 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "workers/image-proxy"
+  ],
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
-    "typecheck": "tsc -b",
-    "test": "vitest run",
+    "typecheck": "tsc -b && npm run typecheck --workspace @friendly/image-proxy",
+    "test": "vitest run && npm test --workspace @friendly/image-proxy",
+    "proxy:dev": "npm run dev --workspace @friendly/image-proxy",
+    "proxy:build": "npm run build --workspace @friendly/image-proxy",
+    "proxy:deploy": "npm run deploy --workspace @friendly/image-proxy",
     "check:architecture": "node scripts/check-architecture.mjs",
     "format": "prettier --write .",
     "check": "npm run typecheck && npm run check:architecture && prettier --check . && npm test"

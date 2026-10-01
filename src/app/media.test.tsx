@@ -394,6 +394,62 @@ describe('media composing and publishing', () => {
     expect(screen.getAllByRole('button', { name: 'Load image' })).toHaveLength(3);
   });
 
+  it('loads external HTTPS images through the proxy automatically, keeps Friendly files local and never falls back after errors', async () => {
+    const user = userEvent.setup();
+    renderMarkup(
+      <RuntimeContext
+        value={{
+          gateway: createDemoGateway().gateway,
+          mediaBaseUrl: 'https://gateway.test/v1',
+          imageProxyUrl: 'https://proxy.example.com/image',
+          isDemo: false,
+          userId: 1,
+          enablePush: async () => {},
+          disablePush: async () => {},
+          logout: () => {},
+        }}
+      >
+        <Markdown
+          text={`![Remote](https://images.example.com/photo.png?version=1)
+
+![Friendly](https://gateway.test/v1/files/download/1/hash)
+
+![Preview](blob:${location.origin}/preview)
+
+<video src="https://images.example.com/clip.mp4"></video>
+
+<audio src="https://images.example.com/voice.wav"></audio>`}
+        />
+      </RuntimeContext>,
+    );
+    const expected = new URL('https://proxy.example.com/image');
+    expected.searchParams.set('url', 'https://images.example.com/photo.png?version=1');
+    const remote = screen.getByRole('img', { name: 'Remote' });
+    expect(remote.getAttribute('src')).toBe(expected.href);
+    expect(remote.getAttribute('crossorigin')).toBe('anonymous');
+    expect(screen.queryByRole('button', { name: 'Load image' })).toBeNull();
+    expect(screen.getByRole('img', { name: 'Friendly' }).getAttribute('src')).toBe(
+      'https://gateway.test/v1/files/download/1/hash',
+    );
+    expect(screen.getByRole('img', { name: 'Preview' }).getAttribute('src')).toBe(
+      `blob:${location.origin}/preview`,
+    );
+    expect(document.querySelector('audio, video')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Load video' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Load audio' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Open image: Remote' }));
+    expect(
+      screen
+        .getAllByRole('img', { name: 'Remote', hidden: true })
+        .map((image) => image.getAttribute('src')),
+    ).toEqual([expected.href, expected.href]);
+    await user.keyboard('{Escape}');
+    fireEvent.error(remote);
+    expect(screen.queryByRole('img', { name: 'Remote' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Retry image' }));
+    expect(screen.getByRole('img', { name: 'Remote' }).getAttribute('src')).toBe(expected.href);
+  });
+
   it.each(['exit', 'unmount'])(
     'releases published demo files on %s while keeping a mounted StrictMode session usable',
     async (action) => {

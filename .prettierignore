@@ -4,3 +4,5 @@ output
 .playwright-cli
 .playwright-mcp
 package-lock.json
+.wrangler
+workers/image-proxy/worker-configuration.d.ts
