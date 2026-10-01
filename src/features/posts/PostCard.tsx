@@ -13,6 +13,7 @@ import {
 } from '../../shared/ui/dropdown-menu';
 import { ConfirmAction } from '../../shared/confirm-action';
 import { useRuntime } from '../../shared/runtime';
+import { ReplyReference } from './ReplyReference';
 
 const date = new Intl.DateTimeFormat('en', {
   day: 'numeric',
@@ -29,6 +30,8 @@ export function PostCard({
   onDelete,
   busy = false,
   replyTo,
+  anchorId,
+  replyTargetId,
 }: {
   post: Post;
   main?: boolean;
@@ -37,6 +40,8 @@ export function PostCard({
   onDelete?: () => Promise<unknown>;
   busy?: boolean;
   replyTo?: Post;
+  anchorId?: string;
+  replyTargetId?: string;
 }) {
   const { userId } = useRuntime();
   const participants = [...new Set(post.replyPreviews?.map((p) => p.nickname))]
@@ -45,6 +50,8 @@ export function PostCard({
   const threadPreview = `${participants} in this thread`;
   return (
     <article
+      id={anchorId}
+      tabIndex={anchorId ? -1 : undefined}
       className={`post-card${main ? ' main-post' : ''}${post.deleted ? ' deleted-post' : ''}`}
     >
       {!post.deleted && (
@@ -53,14 +60,6 @@ export function PostCard({
         </div>
       )}
       <div className="post-content">
-        {replyTo && (
-          <p className="reply-context">
-            Replying to{' '}
-            <Link to={postPath(replyTo)}>
-              {replyTo.deleted ? 'a deleted post' : replyTo.owner.nickname}
-            </Link>
-          </p>
-        )}
         <header className="post-header">
           {post.deleted ? (
             <span className="muted">Post deleted</span>
@@ -99,6 +98,7 @@ export function PostCard({
             </div>
           )}
         </header>
+        {replyTo && <ReplyReference post={replyTo} targetId={replyTargetId} />}
         {!post.deleted && <Markdown text={post.text} />}
         <footer className="post-footer">
           {onReply && !post.deleted && (

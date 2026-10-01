@@ -57,7 +57,7 @@ describe('feed, drafts and form recovery', () => {
     await screen.findByRole('alertdialog');
     await user.click(screen.getByRole('button', { name: 'Keep editing' }));
     await waitFor(() => expect(location.pathname).toBe('/compose'));
-    expect((input as HTMLTextAreaElement).value).toBe('Keep this browser-history draft');
+    expect(input.textContent).toBe('Keep this browser-history draft');
     const unload = new Event('beforeunload', { cancelable: true });
     window.dispatchEvent(unload);
     expect(unload.defaultPrevented).toBe(true);
@@ -68,9 +68,7 @@ describe('feed, drafts and form recovery', () => {
     await waitFor(() => expect(location.pathname).toBe('/community'));
     await act(async () => history.forward());
     await screen.findByRole('heading', { name: 'Create a post' });
-    expect((screen.getByRole('textbox', { name: 'New post' }) as HTMLTextAreaElement).value).toBe(
-      '',
-    );
+    expect(screen.getByRole('textbox', { name: 'New post' }).textContent).toBe('');
   });
 
   it('guards link navigation and explicit cancellation without a second discard prompt', async () => {
@@ -143,10 +141,10 @@ describe('feed, drafts and form recovery', () => {
     await user.type(input, 'Сохраняем черновик при ошибке сети');
     await user.click(screen.getByRole('button', { name: 'Post' }));
     await screen.findByText('Friendly is temporarily unavailable. Please try again later.');
-    expect((input as HTMLTextAreaElement).value).toBe('Сохраняем черновик при ошибке сети');
+    expect(input.textContent).toBe('Сохраняем черновик при ошибке сети');
     await user.click(screen.getByRole('button', { name: 'Post' }));
     await waitFor(() => expect(document.querySelector('.post-list')?.textContent).toContain(text));
-    await waitFor(() => expect((input as HTMLTextAreaElement).value).toBe(''));
+    await waitFor(() => expect(input.textContent).toBe(''));
     expect(
       screen.queryByText('Friendly is temporarily unavailable. Please try again later.'),
     ).toBeNull();
@@ -202,15 +200,13 @@ describe('feed, drafts and form recovery', () => {
       await user.type(input, 'Не потерять ответ');
       await user.click(replies.at(-1)!);
       expect(confirm).not.toHaveBeenCalled();
-      expect((input as HTMLTextAreaElement).value).toBe('Не потерять ответ');
+      expect(input.textContent).toBe('Не потерять ответ');
       await user.click(replies[0]);
       expect(confirm).toHaveBeenCalledOnce();
-      expect((input as HTMLTextAreaElement).value).toBe('Не потерять ответ');
+      expect(input.textContent).toBe('Не потерять ответ');
       confirm.mockReturnValue(true);
       await user.click(replies[0]);
-      expect(((await screen.findByLabelText('Reply to Alex')) as HTMLTextAreaElement).value).toBe(
-        '',
-      );
+      expect((await screen.findByLabelText('Reply to Alex')).textContent).toBe('');
     } finally {
       confirm.mockRestore();
     }
@@ -297,7 +293,7 @@ describe('pending thread operations', () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(await screen.findByRole('button', { name: 'Reply' }));
-    const input = (await screen.findByLabelText('Reply to Тестовый автор')) as HTMLTextAreaElement;
+    const input = await screen.findByLabelText('Reply to Тестовый автор');
     await user.type(input, 'Ответ сохраняется при ошибке');
     await user.click(screen.getByRole('button', { name: 'Send reply' }));
     await waitFor(() => expect(finish).toBeDefined());
@@ -309,7 +305,7 @@ describe('pending thread operations', () => {
     );
     await act(async () => finish!(new Response(null, { status: 500 })));
     await screen.findByText('Friendly is temporarily unavailable. Please try again later.');
-    expect(input.value).toBe('Ответ сохраняется при ошибке');
+    expect(input.textContent).toBe('Ответ сохраняется при ошибке');
     expect((screen.getByRole('button', { name: 'Reply' }) as HTMLButtonElement).disabled).toBe(
       false,
     );

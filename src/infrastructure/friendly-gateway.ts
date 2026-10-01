@@ -132,6 +132,19 @@ export function createFriendlyGateway(options: HttpOptions): FriendlyGateway {
     fileUrl(file) {
       return `${options.baseUrl.replace(/\/$/, '')}/files/download/${file.id}/${part(file.accessHash)}`;
     },
+    async uploadMedia(file, signal) {
+      const body = new FormData();
+      body.append('file', file);
+      return parse(
+        fileSchema,
+        await request('/files/upload', {
+          method: 'POST',
+          body,
+          headers: { 'X-File-Size': String(file.size) },
+          signal,
+        }),
+      );
+    },
     async friends(signal) {
       return parse(
         z.object({ friends: z.array(personSchema) }),

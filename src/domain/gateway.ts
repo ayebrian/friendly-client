@@ -21,6 +21,7 @@ export interface FriendlyGateway {
   person(id: number, accessHash: string, signal?: AbortSignal): Promise<PersonDetails>;
   editProfile(input: ProfileInput, signal?: AbortSignal): Promise<void>;
   uploadAvatar(file: File, preupload: boolean, signal?: AbortSignal): Promise<FileDescriptor>;
+  uploadMedia(file: File, signal?: AbortSignal): Promise<FileDescriptor>;
   fileUrl(file: FileDescriptor): string;
   friends(signal?: AbortSignal): Promise<Person[]>;
   discover(signal?: AbortSignal): Promise<DiscoveryPerson[]>;

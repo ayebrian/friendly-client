@@ -1,4 +1,4 @@
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import remarkGemoji from 'remark-gemoji';
@@ -9,14 +9,53 @@ import { Button } from './ui/button';
 
 const sanitizeSchema = {
   ...defaultSchema,
-  tagNames: [...(defaultSchema.tagNames ?? []), 'audio'],
-  attributes: { ...defaultSchema.attributes, audio: ['src', 'controls'] },
+  tagNames: [...(defaultSchema.tagNames ?? []), 'audio', 'video'],
+  attributes: {
+    ...defaultSchema.attributes,
+    audio: ['src', 'controls'],
+    video: ['src', 'controls', 'playsInline'],
+  },
+  protocols: { ...defaultSchema.protocols, src: [...(defaultSchema.protocols?.src ?? []), 'blob'] },
 };
+
+// Quotes remain text: no nested links, image dialogs or media downloads.
+export function MarkdownExcerpt({ text }: { text: string }) {
+  return (
+    <div className="reply-excerpt">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkBreaks, remarkGemoji]}
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
+        components={{
+          a: ({ children }) => <span>{children}</span>,
+          img: ({ alt }) => <span>[Image{alt ? `: ${alt}` : ''}]</span>,
+          audio: () => <span>[Audio]</span>,
+          video: () => <span>[Video]</span>,
+          input: () => null,
+          details: ({ children }) => <div>{children}</div>,
+          summary: ({ children }) => <span>{children}</span>,
+          hr: () => <span> · </span>,
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    </div>
+  );
+}
 
 export function Markdown({ text, compact = false }: { text: string; compact?: boolean }) {
   return (
     <div className={`markdown${compact ? ' markdown-compact' : ''}`}>
       <ReactMarkdown
+        urlTransform={(url) => {
+          if (url.startsWith('blob:')) {
+            try {
+              return new URL(url).origin === window.location.origin ? url : '';
+            } catch {
+              return '';
+            }
+          }
+          return defaultUrlTransform(url);
+        }}
         remarkPlugins={[remarkGfm, remarkBreaks, remarkGemoji]}
         rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
         components={{
@@ -48,6 +87,7 @@ export function Markdown({ text, compact = false }: { text: string; compact?: bo
               </Dialog>
             ) : null,
           audio: ({ src }) => <audio src={src} controls preload="none" />,
+          video: ({ src }) => <video src={src} controls playsInline preload="metadata" />,
         }}
       >
         {text}

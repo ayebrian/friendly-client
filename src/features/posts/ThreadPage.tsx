@@ -5,11 +5,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Post } from '../../domain/models';
 import { useRuntime } from '../../shared/runtime';
 import { useOperation } from '../../shared/use-operation';
-import { ErrorNotice, Loading } from '../../shared/feedback';
+import { ErrorNotice } from '../../shared/feedback';
 import { Button } from '../../shared/ui/button';
 import { errorMessage } from '../../shared/errors';
 import { PostCard } from './PostCard';
 import { PostComposer } from './PostComposer';
+import { ReplyReference } from './ReplyReference';
+import { PostListSkeleton } from './PostListSkeleton';
 
 export function ThreadPage() {
   const { id, hash } = useParams();
@@ -25,6 +27,7 @@ function Thread() {
   const postId = Number(id);
   const valid = Number.isSafeInteger(postId) && postId >= 0 && !!accessHash;
   const [editor, setEditor] = useState<{ mode: 'reply' | 'edit'; post: Post } | null>(null);
+  const [composerBusy, setComposerBusy] = useState(false);
   const editorDirty = useRef(false);
   const editorElement = useRef<HTMLDivElement>(null);
   const handleDirtyChange = useCallback((dirty: boolean) => {
@@ -34,13 +37,16 @@ function Thread() {
     if (!editor) return;
     // Focus after the post menu has restored focus to its trigger.
     const frame = requestAnimationFrame(() => {
-      editorElement.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus();
+      editorElement.current
+        ?.querySelector<HTMLElement>('[role="textbox"]')
+        ?.focus({ preventScroll: true });
+      editorElement.current?.scrollIntoView?.({ block: 'nearest' });
     });
     return () => cancelAnimationFrame(frame);
   }, [editor]);
   function openEditor(next: NonNullable<typeof editor>) {
     if (editor?.mode === next.mode && editor.post.id === next.post.id) {
-      editorElement.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus();
+      editorElement.current?.querySelector<HTMLElement>('[role="textbox"]')?.focus();
       return;
     }
     if (editorDirty.current && !window.confirm('Switch editors and discard your draft?')) return;
@@ -76,6 +82,7 @@ function Thread() {
     );
   };
   const main = query.data?.pages[0];
+  const rootPostId = (main?.upstream[0] ?? main?.post)?.id;
   const branches = [
     ...new Map(
       query.data?.pages.flatMap((p) => p.replies).map((branch) => [branch.posts[0].id, branch]) ??
@@ -86,9 +93,11 @@ function Thread() {
     <PostCard
       key={post.id}
       post={post}
+      anchorId={`post-${post.id}`}
+      replyTargetId={replyTo ? `post-${replyTo.id}` : undefined}
       main={isMain}
-      busy={operation.isPending}
-      replyTo={replyTo}
+      busy={operation.isPending || composerBusy}
+      replyTo={replyTo?.id === rootPostId ? undefined : replyTo}
       onReply={() => openEditor({ mode: 'reply', post })}
       onEdit={() => openEditor({ mode: 'edit', post })}
       onDelete={async () => {
@@ -108,10 +117,15 @@ function Thread() {
       ) : (
         <>
           {query.isError && (
-            <ErrorNotice message={errorMessage(query.error)} onRetry={() => void query.refetch()} />
+            <ErrorNotice
+              message={errorMessage(query.error)}
+              onRetry={() =>
+                void (query.isFetchNextPageError ? query.fetchNextPage() : query.refetch())
+              }
+            />
           )}
           {query.isPending ? (
-            <Loading />
+            <PostListSkeleton count={3} label="Loading conversation" />
           ) : (
             main?.post && (
               <>
@@ -126,6 +140,9 @@ function Thread() {
                 {card(main.post, true, main.upstream.at(-1))}
                 {editor && (
                   <div className="thread-editor" id="thread-editor" ref={editorElement}>
+                    {editor.mode === 'reply' && (
+                      <ReplyReference post={editor.post} targetId={`post-${editor.post.id}`} />
+                    )}
                     <PostComposer
                       key={`${editor.mode}-${editor.post.id}`}
                       initial={editor.mode === 'edit' ? editor.post.text : ''}
@@ -136,6 +153,7 @@ function Thread() {
                       }
                       submitLabel={editor.mode === 'edit' ? 'Save' : 'Send reply'}
                       onDirtyChange={handleDirtyChange}
+                      onBusyChange={setComposerBusy}
                       onCancel={() => setEditor(null)}
                       onSubmit={async (text) => {
                         await operation.mutateAsync({ ...editor, text });
@@ -158,6 +176,9 @@ function Thread() {
                   </div>
                 ) : (
                   <p className="muted">No replies yet. Start the conversation.</p>
+                )}
+                {query.isFetchingNextPage && (
+                  <PostListSkeleton count={2} label="Loading more replies" />
                 )}
                 {query.hasNextPage && (
                   <Button

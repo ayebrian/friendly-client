@@ -33,10 +33,14 @@ sky and Lucide, with the user’s Inter font override, applied to the existing V
 in `src/app/styles.css` consume it. The preset’s zinc neutrals, sky accent for actions,
 and a red token for errors. No gradients, decorative glow, or card shadows.
 
+The HTML applies the saved or system theme before React starts. Critical canvas
+colors are generated from `tokens.css` and inlined into the document, so the first
+paint uses the correct background even while app assets are still downloading.
+
 ## Typography
 
 The wordmark, headings, controls and login introduction use Inter throughout, including Cyrillic content.
-The font is bundled locally with `@fontsource-variable/inter`, with bundled Cyrillic and Latin subsets and system fallbacks. No fonts require an external network request. Body and secondary text are 14px, section headings 18px, page titles 20px,
+The font is bundled locally with `@fontsource-variable/inter`, with bundled Cyrillic and Latin subsets and system fallbacks. No fonts require an external network request. Latin and Cyrillic are preloaded from the HTML head. All subsets use `font-display: optional` so slow or failed font requests retain a stable system fallback for that page rather than changing visible text later. Body and secondary text are 14px, section headings 18px, page titles 20px,
 and metadata 12px. Inputs stay 16px on mobile. Long prose stays
 within 65ch.
 
@@ -47,8 +51,11 @@ Use the named spacing scale and layout tokens in `tokens.css`. Section breaks us
 Surfaces use the preset’s 10px base radius; controls use Mira’s smaller radius.
 Avatars remain circular. Desktop buttons are 32px and inputs 36px tall. Mobile
 buttons, tabs and inputs retain at least 44px touch targets.
-Hover feedback lasts 150ms; focus rings appear immediately. No page reveals or
-ornamental animation. Reduced-motion preferences are respected.
+Hover feedback lasts 150ms; focus rings appear immediately. Posts, reply editors,
+previews and attachments appear with a subtle 180ms fade and 4px movement.
+Keep the page shell and sticky columns still; existing posts remain mounted during
+refreshes and pagination. Reduced-motion preferences disable these entrances and
+skeleton pulsing. Feed loading uses full post skeletons for initial and additional pages.
 
 ## States
 

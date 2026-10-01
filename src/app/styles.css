@@ -3,7 +3,7 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
-@import '@fontsource-variable/inter';
+@import './fonts.css';
 
 @theme inline {
   --color-background: var(--background);
@@ -436,9 +436,47 @@ html {
   /* Keep the reading columns still while loading states change the page height. */
   scrollbar-gutter: stable;
 }
+@media (forced-colors: none) and (hover: hover) and (pointer: fine) {
+  /* Native scrollbars keep keyboard scrolling and the stable viewport gutter. */
+  @supports selector(::-webkit-scrollbar) {
+    ::-webkit-scrollbar {
+      width: var(--scrollbar-size);
+      height: var(--scrollbar-size);
+    }
+    ::-webkit-scrollbar-track,
+    ::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      min-height: 40px;
+      min-width: 40px;
+      border: 2px solid transparent;
+      border-radius: 999px;
+      background: var(--scrollbar-thumb);
+      background-clip: padding-box;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background-color: var(--scrollbar-thumb-hover);
+    }
+  }
+  @supports not selector(::-webkit-scrollbar) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: var(--scrollbar-thumb) transparent;
+    }
+  }
+}
 html:has(.app-shell) {
   /* The viewport paints the reserved gutter using the root background. */
   background: var(--card);
+}
+html:has(body[data-scroll-locked]) {
+  /* Lock the viewport without changing the scroll container for sticky columns. */
+  overflow-y: hidden;
+}
+html body[data-scroll-locked] {
+  /* Unlike hidden, clip does not turn the body into a scroll container. */
+  overflow: clip !important;
 }
 @supports (scrollbar-gutter: stable) {
   html body[data-scroll-locked] {
@@ -496,6 +534,24 @@ html:has(.app-shell) {
   gap: var(--space-sm);
   padding: var(--space-sm) var(--page-gutter);
   margin: 0 calc(-1 * var(--page-gutter));
+}
+.post-skeleton .post-header {
+  min-height: 24px;
+}
+.post-skeleton-text {
+  display: grid;
+  gap: var(--space-xs);
+  margin-block: var(--space-xs) var(--space-sm);
+}
+.post-skeleton-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: 32px;
+}
+.feed-load-more {
+  width: 100%;
+  min-height: 44px;
 }
 .post-header {
   display: flex;
@@ -578,8 +634,12 @@ html:has(.app-shell) {
   text-align: left;
 }
 .markdown audio,
+.markdown video,
 .markdown img {
   max-width: 100%;
+}
+.markdown video {
+  max-height: 65dvh;
 }
 .markdown a {
   text-decoration: underline;
@@ -618,13 +678,14 @@ html:has(.app-shell) {
   font-size: var(--text-xs);
 }
 .reply-preview {
-  flex: 0 1 24ch;
+  flex: 0 1 auto;
   min-width: 0;
   margin-left: auto;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
   max-width: 24ch;
+  text-align: right;
 }
 .load-more {
   margin-top: var(--space-lg);
@@ -809,11 +870,91 @@ html:has(.app-shell) {
 .composer > .field-hint {
   margin-bottom: 0;
 }
+.media-text-editor {
+  display: block;
+  min-height: 120px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.composer-compact .media-text-editor {
+  min-height: 64px;
+}
+.media-text-editor[data-empty='true']::before {
+  content: attr(data-placeholder);
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+.media-text-editor[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.composer-toolbar,
+.composer-media-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+.composer-toolbar {
+  justify-content: space-between;
+  gap: var(--space-xs);
+}
+.composer-toolbar .form-actions {
+  margin-left: auto;
+}
+.composer-attachments {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: var(--space-sm);
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.composer-attachment {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.composer-attachment > img,
+.composer-attachment > video {
+  display: block;
+  width: 100%;
+  height: 160px;
+  object-fit: contain;
+  background: var(--muted);
+}
+.composer-attachment > audio {
+  display: block;
+  width: 100%;
+  padding: var(--space-xs);
+}
+.attachment-caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  padding: var(--space-xs);
+  font-size: var(--text-xs);
+}
+.attachment-caption > div {
+  min-width: 0;
+}
+.attachment-caption span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.attachment-caption button {
+  flex-shrink: 0;
+  min-width: 44px;
+  min-height: 44px;
+}
 .thread-editor {
   background: var(--secondary);
   border-radius: var(--radius);
   margin-block: var(--space-md);
   padding: var(--space-md);
+  scroll-margin-block: 80px;
 }
 .thread-editor .composer {
   margin-top: 0;
@@ -839,10 +980,66 @@ html:has(.app-shell) {
   border-left: 1px solid var(--border);
 }
 .reply-context {
+  display: block;
+  min-width: 0;
+  padding: var(--space-xs) var(--space-sm);
+  margin-block: var(--space-xs) var(--space-sm);
+  border-left: 2px solid var(--primary);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--secondary);
   color: var(--muted-foreground);
   font-size: var(--text-xs);
-  margin-bottom: var(--space-2xs);
   overflow-wrap: anywhere;
+}
+.reply-context:hover {
+  background: var(--accent);
+  text-decoration: none;
+}
+.reply-context:focus-visible,
+.post-card:focus {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.reply-context-label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  margin-bottom: var(--space-2xs);
+}
+.reply-context-label svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  align-self: center;
+}
+.reply-context-label strong {
+  color: var(--foreground);
+  font-weight: 600;
+}
+.reply-excerpt {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+.reply-excerpt * {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+}
+.reply-excerpt p + p::before,
+.reply-excerpt li + li::before {
+  content: ' ';
+}
+.deleted-post .post-content {
+  grid-column: 2;
+}
+.post-card[id] {
+  scroll-margin-block: 80px;
 }
 .section-title {
   margin-top: var(--section-gap);
@@ -1018,9 +1215,6 @@ html:has(.app-shell) {
   width: 20px;
   height: 20px;
 }
-.deleted-post {
-  grid-template-columns: minmax(0, 1fr);
-}
 .post-content {
   min-width: 0;
 }
@@ -1171,6 +1365,10 @@ html:has(.app-shell) {
     top: 56px;
     margin-bottom: var(--space-xs);
   }
+  .post-card[id],
+  .thread-editor {
+    scroll-margin-block: 140px;
+  }
   .activity-toolbar {
     padding-bottom: 8px;
     gap: var(--space-xs);
@@ -1216,6 +1414,9 @@ html:has(.app-shell) {
   }
   .post-card {
   }
+  .post-skeleton-actions {
+    min-height: 44px;
+  }
   .post-header {
     gap: var(--space-xs);
   }
@@ -1231,6 +1432,7 @@ html:has(.app-shell) {
     flex-basis: 100%;
     max-width: 100%;
     margin-left: 0;
+    text-align: left;
   }
   .friends-list {
     grid-template-columns: minmax(0, 1fr);
@@ -1423,6 +1625,31 @@ html:has(.app-shell) {
   }
   .main-column {
     border-inline: 0;
+  }
+}
+@keyframes content-arrive {
+  from {
+    opacity: 0;
+    translate: 0 4px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .post-card:not(.post-skeleton),
+  .thread-editor,
+  .composer-preview,
+  .composer-attachment,
+  .empty-state {
+    animation: content-arrive var(--dur-enter) var(--ease-out) backwards;
+  }
+  .reply-context,
+  .sidebar nav a {
+    transition:
+      background-color var(--dur-short) var(--ease-out),
+      color var(--dur-short) var(--ease-out);
   }
 }
 @media (prefers-reduced-motion: reduce) {

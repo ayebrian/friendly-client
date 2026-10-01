@@ -2,12 +2,13 @@ import { PageHeader } from '../../shared/page-header';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useRuntime } from '../../shared/runtime';
 import { Button } from '../../shared/ui/button';
-import { ErrorNotice, EmptyState, Loading } from '../../shared/feedback';
+import { ErrorNotice, EmptyState } from '../../shared/feedback';
 import { errorMessage } from '../../shared/errors';
 import { PostCard } from './PostCard';
 import { PostComposer } from './PostComposer';
+import { PostListSkeleton } from './PostListSkeleton';
 import { useOperation } from '../../shared/use-operation';
-import { UserRound } from 'lucide-react';
+import { Loader2, UserRound } from 'lucide-react';
 
 export function CommunityPage() {
   const { gateway } = useRuntime();
@@ -25,6 +26,12 @@ export function CommunityPage() {
       query.data?.pages.flatMap((page) => page.items).map((post) => [post.id, post]) ?? [],
     ).values(),
   ];
+  const errorNotice = query.isError && (
+    <ErrorNotice
+      message={errorMessage(query.error)}
+      onRetry={() => void (query.isFetchNextPageError ? query.fetchNextPage() : query.refetch())}
+    />
+  );
   return (
     <section className="page-content community-page">
       <PageHeader>
@@ -46,11 +53,9 @@ export function CommunityPage() {
           }}
         />
       </div>
-      {query.isError && (
-        <ErrorNotice message={errorMessage(query.error)} onRetry={() => void query.refetch()} />
-      )}
+      {!items.length && errorNotice}
       {query.isPending ? (
-        <Loading />
+        <PostListSkeleton />
       ) : !items.length && !query.isError ? (
         <EmptyState title="It is quiet here">
           Start a conversation. Share what is on your mind.
@@ -62,14 +67,19 @@ export function CommunityPage() {
           ))}
         </div>
       )}
+      {!!items.length && errorNotice}
+      {query.isFetchingNextPage && <PostListSkeleton count={2} label="Loading more posts" />}
       {query.hasNextPage && (
         <Button
-          className="load-more"
+          className="load-more feed-load-more"
           variant="outline"
           disabled={query.isFetching}
           onClick={() => void query.fetchNextPage()}
         >
-          {query.isFetchingNextPage ? 'Loading…' : 'Show more'}
+          {query.isFetchingNextPage && (
+            <Loader2 className="motion-safe:animate-spin" aria-hidden="true" />
+          )}
+          {query.isFetchingNextPage ? 'Loading more…' : 'Show more'}
         </Button>
       )}
     </section>

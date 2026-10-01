@@ -158,6 +158,12 @@ export function createDemoGateway() {
       files.set(id, URL.createObjectURL(file));
       return { id, accessHash: `demo-file-${id}` };
     },
+    async uploadMedia(file, signal) {
+      signal?.throwIfAborted();
+      const id = ++nextId;
+      files.set(id, URL.createObjectURL(file));
+      return { id, accessHash: `demo-file-${id}` };
+    },
     fileUrl(file) {
       return files.get(file.id) ?? '';
     },
