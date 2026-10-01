@@ -1,6 +1,6 @@
 import { PageHeader } from '../../shared/page-header';
 import { useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -10,6 +10,7 @@ import { useOperation } from '../../shared/use-operation';
 import { usePreferences } from '../../shared/preferences';
 import { Button } from '../../shared/ui/button';
 import { Input } from '../../shared/ui/input';
+import { EmailCodeInput } from '../../shared/email-code-input';
 import { Field, FieldLabel, FieldError } from '../../shared/ui/field';
 import { ConfirmAction } from '../../shared/confirm-action';
 import { ErrorNotice, Loading } from '../../shared/feedback';
@@ -133,15 +134,18 @@ export function SettingsPage() {
                 </p>
                 <Field data-invalid={!!codeForm.formState.errors.code}>
                   <FieldLabel htmlFor="email-code">Verification code</FieldLabel>
-                  <Input
-                    id="email-code"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    maxLength={8}
-                    disabled={pending}
-                    aria-invalid={!!codeForm.formState.errors.code}
-                    aria-describedby="email-code-error"
-                    {...codeForm.register('code')}
+                  <Controller
+                    control={codeForm.control}
+                    name="code"
+                    render={({ field, fieldState }) => (
+                      <EmailCodeInput
+                        {...field}
+                        id="email-code"
+                        disabled={pending}
+                        aria-invalid={fieldState.invalid}
+                        aria-describedby="email-code-error"
+                      />
+                    )}
                   />
                   <FieldError id="email-code-error" errors={[codeForm.formState.errors.code]} />
                 </Field>

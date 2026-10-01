@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
+import { securityHeaders } from './scripts/security-headers.ts';
 
 // Paint the selected theme while app assets download, using the shared palette.
 function initialTheme() {
@@ -40,6 +41,6 @@ function initialTheme() {
 }
 
 export default defineConfig({
-  plugins: [initialTheme(), react(), tailwindcss()],
+  plugins: [initialTheme(), react(), tailwindcss(), securityHeaders()],
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
 });

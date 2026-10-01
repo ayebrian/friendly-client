@@ -1,0 +1,70 @@
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import type { Plugin } from 'vite';
+
+/** Generate Cloudflare Pages headers from the final HTML, including its theme script. */
+export function securityHeaders(): Plugin {
+  let outputDirectory = '';
+  let apiOrigin = '';
+  return {
+    name: 'friendly-security-headers',
+    configResolved(config) {
+      outputDirectory = resolve(config.root, config.build.outDir);
+      const api = new URL(config.env.VITE_API_BASE_URL || 'https://api.getfriend.ly');
+      if (!['https:', 'http:'].includes(api.protocol) || api.username || api.password)
+        throw new Error('VITE_API_BASE_URL must be a public HTTP(S) API URL.');
+      apiOrigin = api.origin;
+    },
+    generateBundle: {
+      order: 'post',
+      handler(_options, bundle) {
+        const index = bundle['index.html'];
+        if (!index || index.type !== 'asset') throw new Error('Missing HTML for CSP generation.');
+        const html =
+          typeof index.source === 'string' ? index.source : Buffer.from(index.source).toString();
+        const hashes = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)]
+          .filter((match) => !/\bsrc\s*=/.test(match[1]) && match[2].trim())
+          .map((match) => `'sha256-${createHash('sha256').update(match[2]).digest('base64')}'`);
+        if (!hashes.length) throw new Error('Missing initial theme script for CSP.');
+        const policy = [
+          "default-src 'self'",
+          `script-src 'self' ${hashes.join(' ')}`,
+          "script-src-attr 'none'",
+          // Radix inserts scroll-lock styles dynamically, and React uses style attributes.
+          // Inline styles are allowed; executable inline scripts remain hash-restricted.
+          "style-src 'self' 'unsafe-inline'",
+          "font-src 'self'",
+          `img-src 'self' blob: https: ${apiOrigin}`,
+          `media-src 'self' blob: https: ${apiOrigin}`,
+          `connect-src 'self' ${apiOrigin} https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com`,
+          "worker-src 'self'",
+          "object-src 'none'",
+          "base-uri 'none'",
+          "form-action 'self'",
+          "frame-ancestors 'none'",
+          'upgrade-insecure-requests',
+        ].join('; ');
+        this.emitFile({
+          type: 'asset',
+          fileName: '_headers',
+          source: `/*\n  Content-Security-Policy: ${policy}\n  X-Frame-Options: DENY\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: no-referrer\n`,
+        });
+      },
+    },
+    // Vite does not read Pages' _headers. Apply the generated policy to preview as well.
+    configurePreviewServer(server) {
+      const headers = readFileSync(resolve(outputDirectory, '_headers'), 'utf8')
+        .split('\n')
+        .filter((line) => line.startsWith('  '))
+        .map((line) => {
+          const separator = line.indexOf(':');
+          return [line.slice(0, separator).trim(), line.slice(separator + 1).trim()] as const;
+        });
+      server.middlewares.use((_request, response, next) => {
+        headers.forEach(([name, value]) => response.setHeader(name, value));
+        next();
+      });
+    },
+  };
+}

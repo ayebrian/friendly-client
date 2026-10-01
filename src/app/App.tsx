@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import './validation-policy';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Link,
   Navigate,
@@ -184,6 +185,7 @@ function SessionApp({
     });
     return {
       gateway,
+      mediaBaseUrl: baseUrl,
       isDemo: false,
       userId: session.authorization.id,
       logout: () => {
@@ -196,6 +198,20 @@ function SessionApp({
       dispose: () => {},
     };
   }, [session, logout, expire, client, lifetime]);
+  // StrictMode cleans up and immediately reattaches the same adapter. Defer disposal
+  // one microtask so only the final detach revokes the session's uploaded files.
+  const attachedAdapters = useRef(new Set<typeof runtime>());
+  useEffect(() => {
+    const active = attachedAdapters.current;
+    const adapter = runtime;
+    active.add(adapter);
+    return () => {
+      active.delete(adapter);
+      queueMicrotask(() => {
+        if (!active.has(adapter)) adapter.dispose();
+      });
+    };
+  }, [runtime]);
   useEffect(() => {
     if (runtime.isDemo || !('serviceWorker' in navigator)) return;
     const refresh = (event: MessageEvent) => {

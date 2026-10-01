@@ -9,6 +9,7 @@ import { errorMessage } from '../../shared/errors';
 import { ErrorNotice } from '../../shared/feedback';
 import { Button } from '../../shared/ui/button';
 import { Input } from '../../shared/ui/input';
+import { EmailCodeInput } from '../../shared/email-code-input';
 import { Alert, AlertDescription } from '../../shared/ui/alert';
 import { Field, FieldLabel, FieldDescription, FieldError } from '../../shared/ui/field';
 import { Separator } from '../../shared/ui/separator';
@@ -114,23 +115,12 @@ export function LoginPage({ gateway, onLogin, onDemo, notice }: Props) {
                 render={({ field, fieldState }) => (
                   <Field data-invalid={fieldState.invalid}>
                     <FieldLabel htmlFor="login-code">Email code</FieldLabel>
-                    <Input
+                    <EmailCodeInput
                       {...field}
                       id="login-code"
                       autoFocus
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      placeholder="0000-0000"
-                      className="tracking-widest tabular-nums"
                       aria-invalid={fieldState.invalid}
                       aria-describedby={`code-hint${fieldState.invalid ? ' code-error' : ''}`}
-                      onChange={(event) => {
-                        // Native maxLength truncates pasted whitespace/separators before this handler.
-                        const digits = event.target.value.replace(/\D/g, '').slice(0, 8);
-                        field.onChange(
-                          digits.length > 4 ? `${digits.slice(0, 4)}-${digits.slice(4)}` : digits,
-                        );
-                      }}
                     />
                     <FieldDescription id="code-hint">
                       8 digits. The code expires in 20 minutes.

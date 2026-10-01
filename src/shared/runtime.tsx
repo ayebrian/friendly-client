@@ -3,6 +3,7 @@ import type { FriendlyGateway } from '../domain/gateway';
 
 export interface Runtime {
   gateway: FriendlyGateway;
+  mediaBaseUrl?: string;
   isDemo: boolean;
   userId: number;
   enablePush: () => Promise<void>;

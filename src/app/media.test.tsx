@@ -12,6 +12,8 @@ import userEvent from '@testing-library/user-event';
 import { renderApp as render } from './render-app.test-utils';
 import { App } from './App';
 import { Markdown } from '../shared/markdown';
+import { RuntimeContext } from '../shared/runtime';
+import { createDemoGateway } from '../infrastructure/demo-gateway';
 
 const NativeURL = URL;
 const auth = { id: 1, token: 'test-token', accessHash: 'test-hash' };
@@ -301,7 +303,8 @@ describe('media composing and publishing', () => {
     expect(publications(fetcher)).toHaveLength(0);
   });
 
-  it('renders media controls while removing executable HTML and unsafe sources', () => {
+  it('renders media controls after approval while removing executable HTML and unsafe sources', async () => {
+    const user = userEvent.setup();
     renderMarkup(
       <Markdown
         text={
@@ -309,6 +312,9 @@ describe('media composing and publishing', () => {
         }
       />,
     );
+    expect(document.querySelector('video, audio')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Load video' }));
+    await user.click(screen.getByRole('button', { name: 'Load audio' }));
     const player = document.querySelector('video')!;
     expect(player.controls).toBe(true);
     expect(player.playsInline).toBe(true);
@@ -318,4 +324,108 @@ describe('media composing and publishing', () => {
     expect(document.querySelector('script')).toBeNull();
     expect(document.querySelector('[src^="javascript:"]')).toBeNull();
   });
+
+  it('keeps approval through refresh, requires approval for a changed URL and allows retry after a media error', async () => {
+    const user = userEvent.setup();
+    const text = '![Remote photo](https://external.test/photo.png)';
+    const view = renderMarkup(<Markdown text={text} />);
+    expect(document.querySelector('img')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Load image' }));
+    expect(screen.getByRole('img').getAttribute('referrerpolicy')).toBe('no-referrer');
+    view.rerender(<Markdown text={text} />);
+    expect(screen.queryByRole('button', { name: 'Load image' })).toBeNull();
+    fireEvent.error(screen.getByRole('img'));
+    expect(screen.getByText('Could not load image')).toBeTruthy();
+    expect(document.querySelector('img')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Retry image' }));
+    expect(screen.getByRole('img').getAttribute('src')).toBe('https://external.test/photo.png');
+    view.rerender(<Markdown text="![Remote photo](https://external.test/another.png)" />);
+    expect(document.querySelector('img')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Load image' })).toBeTruthy();
+  });
+
+  it("does not let source, srcset, unsafe protocols or another origin's blob bypass approval", () => {
+    renderMarkup(
+      <Markdown
+        text={`<picture><source srcset="https://external.test/track.png"><img src="https://external.test/photo.png" srcset="https://external.test/track.png"></picture>
+
+<video><source src="https://external.test/track.mp4"></video>
+
+<img src="data:image/svg+xml,unsafe"><img src="blob:https://external.test/uuid"><img src="https://user:password@external.test/photo.png">`}
+      />,
+    );
+    expect(document.querySelector('source, img, audio, video, [srcset]')).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'Load image' })).toHaveLength(1);
+  });
+
+  it('trusts only the exact configured API download path, same origin and local blobs', () => {
+    renderMarkup(
+      <RuntimeContext
+        value={{
+          gateway: createDemoGateway().gateway,
+          mediaBaseUrl: 'https://gateway.test/v1',
+          isDemo: false,
+          userId: 1,
+          enablePush: async () => {},
+          disablePush: async () => {},
+          logout: () => {},
+        }}
+      >
+        <Markdown
+          text={`![Local](/local.png)
+
+![Preview](blob:${location.origin}/preview)
+
+![Download](https://gateway.test/v1/files/download/1/hash)
+
+![Other API path](https://gateway.test/v1/files/downloadish/1/hash)
+
+![Other host](https://gateway.test.attacker.test/v1/files/download/1/hash)
+
+![Traversed path](https://gateway.test/v1/files/download/../../../tracking.png)`}
+        />
+      </RuntimeContext>,
+    );
+    expect(screen.getAllByRole('img').map((image) => image.getAttribute('alt'))).toEqual([
+      'Local',
+      'Preview',
+      'Download',
+    ]);
+    expect(screen.getAllByRole('button', { name: 'Load image' })).toHaveLength(3);
+  });
+
+  it.each(['exit', 'unmount'])(
+    'releases published demo files on %s while keeping a mounted StrictMode session usable',
+    async (action) => {
+      history.replaceState(null, '', '/community');
+      const user = userEvent.setup();
+      const view = render(<App />);
+      await user.click(screen.getByRole('button', { name: 'Try the demo' }));
+      const publish = async () => {
+        await user.upload(await screen.findByLabelText('Choose media files'), image());
+        await user.click(screen.getByRole('button', { name: 'Post' }));
+        await waitFor(() =>
+          expect(document.querySelector('.post-list .markdown img')).toBeTruthy(),
+        );
+        return document.querySelector('.post-list .markdown img')!.getAttribute('src');
+      };
+      const source = await publish();
+      expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(source);
+      if (action === 'unmount') view.unmount();
+      else {
+        await user.click(screen.getByRole('button', { name: 'Account menu' }));
+        await user.click(screen.getByRole('menuitem', { name: 'Exit demo' }));
+        await screen.findByRole('heading', { name: 'Sign in to Friendly' });
+      }
+      await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith(source));
+      if (action === 'exit') {
+        await user.click(screen.getByRole('button', { name: 'Try the demo' }));
+        const nextSource = await publish();
+        expect(nextSource).not.toBe(source);
+        expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(nextSource);
+        view.unmount();
+        await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith(nextSource));
+      }
+    },
+  );
 });

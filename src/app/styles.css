@@ -641,6 +641,29 @@ html body[data-scroll-locked] {
 .markdown video {
   max-height: 65dvh;
 }
+
+.external-media {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-block: var(--space-sm);
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.external-media-description {
+  display: flex;
+  flex: 1 1 180px;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  overflow-wrap: anywhere;
+}
+.external-media-description > span {
+  color: var(--muted-foreground);
+  font-size: var(--text-xs);
+}
 .markdown a {
   text-decoration: underline;
   text-underline-offset: 3px;
