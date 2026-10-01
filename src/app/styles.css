@@ -432,6 +432,20 @@ html,
 body {
   overflow-x: clip;
 }
+html {
+  /* Keep the reading columns still while loading states change the page height. */
+  scrollbar-gutter: stable;
+}
+html:has(.app-shell) {
+  /* The viewport paints the reserved gutter using the root background. */
+  background: var(--card);
+}
+@supports (scrollbar-gutter: stable) {
+  html body[data-scroll-locked] {
+    /* Radix's scroll lock must not compensate again for the reserved gutter. */
+    margin-right: 0 !important;
+  }
+}
 .skip-link {
   position: fixed;
   top: var(--space-xs);
@@ -813,7 +827,22 @@ body {
 .reply-branch + .reply-branch {
   margin-top: var(--space-sm);
 }
-.reply-branch .post-card {
+.post-avatar {
+  position: relative;
+}
+.reply-branch.thread .post-card:not(:last-child) .post-avatar::after {
+  content: '';
+  position: absolute;
+  top: 44px;
+  bottom: calc(-1 * var(--space-sm));
+  left: 19px;
+  border-left: 1px solid var(--border);
+}
+.reply-context {
+  color: var(--muted-foreground);
+  font-size: var(--text-xs);
+  margin-bottom: var(--space-2xs);
+  overflow-wrap: anywhere;
 }
 .section-title {
   margin-top: var(--section-gap);
@@ -1134,7 +1163,7 @@ body {
     font-size: 24px;
   }
   .page-content {
-    padding: 0 var(--page-gutter) 96px;
+    padding: 0 var(--page-gutter) calc(144px + env(safe-area-inset-bottom));
   }
   .page-heading {
     align-items: center;
@@ -1381,6 +1410,9 @@ body {
     border-radius: var(--radius);
   }
   .nav-compose span {
+    display: none;
+  }
+  .nav-compose-desktop {
     display: none;
   }
   .brand-short {

@@ -88,167 +88,168 @@ export function ProfileForm({
   });
   const pending = form.formState.isSubmitting;
   const dirty = form.formState.isDirty || !!file || removeAvatar;
-  useUnsavedChanges(dirty && !pending);
+  const guard = useUnsavedChanges(dirty && !pending);
   const avatarUrl =
     preview || (!removeAvatar && person?.avatar ? gateway.fileUrl(person.avatar) : '');
   return (
-    <form
-      className="editor-form"
-      noValidate
-      onSubmit={form.handleSubmit(async (values) => {
-        if (fileError) return;
-        setError('');
-        const signal = controller.current.signal;
-        try {
-          const avatar = file
-            ? await gateway.uploadAvatar(file, !person, signal)
-            : removeAvatar
-              ? null
-              : (person?.avatar ?? null);
-          signal.throwIfAborted();
-          await onSave(
-            {
-              ...values,
-              interests: values.interests.trim()
-                ? values.interests.split(',').map((v) => v.trim())
-                : [],
-              socialLink: values.socialLink ? safeExternalLink(values.socialLink)! : null,
-              avatar,
-            },
-            signal,
-          );
-        } catch (err) {
-          if (!signal.aborted) setError(errorMessage(err));
-        }
-      })}
-    >
-      <div className="avatar-editor">
-        <div className="avatar-preview">
-          {avatarUrl ? (
-            <img src={avatarUrl} alt="Your avatar" width={80} height={80} />
-          ) : (
-            <span aria-hidden="true">{person?.nickname[0] ?? '+'}</span>
-          )}
-        </div>
-        <Field>
-          <FieldLabel htmlFor={`${prefix}-avatar`}>Photo</FieldLabel>
-          <Input
-            ref={avatarInput}
-            id={`${prefix}-avatar`}
-            type="file"
-            accept="image/jpeg,image/png,image/webp,image/gif"
-            disabled={pending}
-            aria-invalid={!!fileError}
-            aria-describedby={`${prefix}-avatar-help`}
-            onChange={(event) => {
-              const selected = event.target.files?.[0];
-              if (!selected) return;
-              if (
-                !['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(selected.type) ||
-                selected.size > 5_000_000
-              ) {
-                setFileError('Choose a JPG, PNG, WebP, or GIF up to 5 MB.');
-                event.target.value = '';
-                return;
-              }
-              setFileError('');
-              setFile(selected);
-              setRemoveAvatar(false);
-            }}
-          />
-          <FieldDescription id={`${prefix}-avatar-help`}>
-            {fileError || 'JPG, PNG, WebP, or GIF, up to 5 MB.'}
-          </FieldDescription>
-          {fileError && (
-            <Button
-              type="button"
-              variant="link"
-              disabled={pending}
-              onClick={() => {
-                setFileError('');
-                setFile(null);
-                setRemoveAvatar(false);
-                if (avatarInput.current) avatarInput.current.value = '';
-              }}
-            >
-              Clear file selection
-            </Button>
-          )}
-          {(file || (person?.avatar && !removeAvatar)) && (
-            <Button
-              type="button"
-              variant="link"
-              disabled={pending}
-              onClick={() => {
-                setFile(null);
-                setRemoveAvatar(true);
-                setFileError('');
-                if (avatarInput.current) avatarInput.current.value = '';
-              }}
-            >
-              Remove photo
-            </Button>
-          )}
-        </Field>
-      </div>
-      {(['nickname', 'description', 'interests', 'socialLink'] as const).map((name) => {
-        const labels = {
-          nickname: 'Name',
-          description: 'About you',
-          interests: 'Interests',
-          socialLink: 'Contact link',
-        };
-        const props = {
-          ...form.register(name),
-          id: `${prefix}-${name}`,
-          disabled: pending,
-          'aria-invalid': !!form.formState.errors[name],
-          'aria-describedby': `${prefix}-${name}-error`,
-          autoComplete: 'off',
-        };
-        return (
-          <Field key={name} data-invalid={!!form.formState.errors[name]}>
-            <FieldLabel htmlFor={props.id}>{labels[name]}</FieldLabel>
-            {name === 'description' ? (
-              <Textarea
-                {...props}
-                rows={4}
-                maxLength={1024}
-                placeholder="What are you interested in? Who would you like to meet?"
-              />
+    <>
+      <form
+        className="editor-form"
+        noValidate
+        onSubmit={form.handleSubmit(async (values) => {
+          if (fileError) return;
+          setError('');
+          const signal = controller.current.signal;
+          try {
+            const avatar = file
+              ? await gateway.uploadAvatar(file, !person, signal)
+              : removeAvatar
+                ? null
+                : (person?.avatar ?? null);
+            signal.throwIfAborted();
+            await onSave(
+              {
+                ...values,
+                interests: values.interests.trim()
+                  ? values.interests.split(',').map((v) => v.trim())
+                  : [],
+                socialLink: values.socialLink ? safeExternalLink(values.socialLink)! : null,
+                avatar,
+              },
+              signal,
+            );
+          } catch (err) {
+            if (!signal.aborted) setError(errorMessage(err));
+          }
+        })}
+      >
+        <div className="avatar-editor">
+          <div className="avatar-preview">
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="Your avatar" width={80} height={80} />
             ) : (
-              <Input
-                {...props}
-                maxLength={name === 'nickname' ? 256 : name === 'socialLink' ? 2048 : 6500}
-                placeholder={
-                  name === 'interests'
-                    ? 'Photography, books, walking…'
-                    : name === 'socialLink'
-                      ? 'https://example.com…'
-                      : 'What should we call you?'
-                }
-              />
+              <span aria-hidden="true">{person?.nickname[0] ?? '+'}</span>
             )}
-            <FieldError id={`${prefix}-${name}-error`} errors={[form.formState.errors[name]]} />
+          </div>
+          <Field>
+            <FieldLabel htmlFor={`${prefix}-avatar`}>Photo</FieldLabel>
+            <Input
+              ref={avatarInput}
+              id={`${prefix}-avatar`}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              disabled={pending}
+              aria-invalid={!!fileError}
+              aria-describedby={`${prefix}-avatar-help`}
+              onChange={(event) => {
+                const selected = event.target.files?.[0];
+                if (!selected) return;
+                if (
+                  !['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(selected.type) ||
+                  selected.size > 5_000_000
+                ) {
+                  setFileError('Choose a JPG, PNG, WebP, or GIF up to 5 MB.');
+                  event.target.value = '';
+                  return;
+                }
+                setFileError('');
+                setFile(selected);
+                setRemoveAvatar(false);
+              }}
+            />
+            <FieldDescription id={`${prefix}-avatar-help`}>
+              {fileError || 'JPG, PNG, WebP, or GIF, up to 5 MB.'}
+            </FieldDescription>
+            {fileError && (
+              <Button
+                type="button"
+                variant="link"
+                disabled={pending}
+                onClick={() => {
+                  setFileError('');
+                  setFile(null);
+                  setRemoveAvatar(false);
+                  if (avatarInput.current) avatarInput.current.value = '';
+                }}
+              >
+                Clear file selection
+              </Button>
+            )}
+            {(file || (person?.avatar && !removeAvatar)) && (
+              <Button
+                type="button"
+                variant="link"
+                disabled={pending}
+                onClick={() => {
+                  setFile(null);
+                  setRemoveAvatar(true);
+                  setFileError('');
+                  if (avatarInput.current) avatarInput.current.value = '';
+                }}
+              >
+                Remove photo
+              </Button>
+            )}
           </Field>
-        );
-      })}
-      {error && <ErrorNotice message={error} />}
-      <div className="form-actions">
-        <Button
-          type="button"
-          variant="outline"
-          disabled={pending}
-          onClick={() => {
-            if (!dirty || window.confirm('Discard your unsaved changes?')) onCancel();
-          }}
-        >
-          Cancel
-        </Button>
-        <Button type="submit" disabled={pending || !!fileError}>
-          {pending ? 'Saving…' : submitLabel}
-        </Button>
-      </div>
-    </form>
+        </div>
+        {(['nickname', 'description', 'interests', 'socialLink'] as const).map((name) => {
+          const labels = {
+            nickname: 'Name',
+            description: 'About you',
+            interests: 'Interests',
+            socialLink: 'Contact link',
+          };
+          const props = {
+            ...form.register(name),
+            id: `${prefix}-${name}`,
+            disabled: pending,
+            'aria-invalid': !!form.formState.errors[name],
+            'aria-describedby': `${prefix}-${name}-error`,
+            autoComplete: 'off',
+          };
+          return (
+            <Field key={name} data-invalid={!!form.formState.errors[name]}>
+              <FieldLabel htmlFor={props.id}>{labels[name]}</FieldLabel>
+              {name === 'description' ? (
+                <Textarea
+                  {...props}
+                  rows={4}
+                  maxLength={1024}
+                  placeholder="What are you interested in? Who would you like to meet?"
+                />
+              ) : (
+                <Input
+                  {...props}
+                  maxLength={name === 'nickname' ? 256 : name === 'socialLink' ? 2048 : 6500}
+                  placeholder={
+                    name === 'interests'
+                      ? 'Photography, books, walking…'
+                      : name === 'socialLink'
+                        ? 'https://example.com…'
+                        : 'What should we call you?'
+                  }
+                />
+              )}
+              <FieldError id={`${prefix}-${name}-error`} errors={[form.formState.errors[name]]} />
+            </Field>
+          );
+        })}
+        {error && <ErrorNotice message={error} />}
+        <div className="form-actions">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={pending}
+            onClick={() => guard.confirmDiscard(onCancel)}
+          >
+            Cancel
+          </Button>
+          <Button type="submit" disabled={pending || !!fileError}>
+            {pending ? 'Saving…' : submitLabel}
+          </Button>
+        </div>
+      </form>
+      {guard.confirmation}
+    </>
   );
 }

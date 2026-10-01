@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, screen, waitFor } from '@testing-library/react';
+import { renderApp as render } from './render-app.test-utils';
 import userEvent from '@testing-library/user-event';
 import { App } from './App';
 import { StrictMode } from 'react';
@@ -44,6 +45,50 @@ const event = {
 const auth = { id: 1, token: 'test-token', accessHash: 'test-hash' };
 
 describe('session and notification integration', () => {
+  it.each(['code', 'login'] as const)(
+    'cancels a pending %s request and ignores its late response after leaving sign-in',
+    async (stage) => {
+      let finish: ((response: Response) => void) | undefined;
+      let requestSignal: AbortSignal | undefined;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn<typeof fetch>(async (url, options) => {
+          const path = new URL(String(url)).pathname;
+          const delayed = stage === 'code' ? '/auth/email' : '/auth/login';
+          if (path === delayed) {
+            requestSignal = options?.signal as AbortSignal;
+            // Deliberately resolve after abort, as a response may already be queued.
+            return new Promise<Response>((resolve) => {
+              finish = resolve;
+            });
+          }
+          if (path === '/auth/email') return new Response(null);
+          if (path === '/activity/list')
+            return new Response(JSON.stringify({ data: [], nextId: null }));
+          throw new Error('Unexpected endpoint');
+        }),
+      );
+      const user = userEvent.setup();
+      render(<App />);
+      await user.type(screen.getByLabelText('Email address'), 'test@example.test');
+      await user.click(screen.getByRole('button', { name: 'Get a code' }));
+      if (stage === 'login') {
+        await user.type(await screen.findByLabelText('Email code'), '12345678');
+        await user.click(screen.getByRole('button', { name: 'Sign in' }));
+      }
+      await waitFor(() => expect(finish).toBeDefined());
+      await user.click(screen.getByRole('link', { name: 'Create account' }));
+      const name = await screen.findByLabelText('Name');
+      await user.type(name, 'Registration in progress');
+      expect(requestSignal!.aborted).toBe(true);
+      await act(async () => finish!(new Response(JSON.stringify(auth))));
+      expect(location.pathname).toBe('/signup');
+      expect((name as HTMLInputElement).value).toBe('Registration in progress');
+      expect(sessionStorage.getItem('friendly.session.v1')).toBeNull();
+      expect(screen.queryByRole('navigation')).toBeNull();
+    },
+  );
+
   it('polls activity on a different page without enabling push', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     let events = [event];
@@ -163,6 +208,41 @@ describe('session and notification integration', () => {
 });
 
 describe('forms and keyboard navigation', () => {
+  it.each([
+    ['plain digits', '12345678'],
+    ['formatted code', '1234-5678'],
+    ['a leading space', ' 1234-5678'],
+    ['surrounding whitespace', ' \t1234 5678 \n'],
+    ['invisible characters', '\u200e1234-\u200b5678'],
+    ['digit groups', '12 34 56 78'],
+  ])('pastes all 8 digits from %s and submits the complete code', async (_label, pasted) => {
+    let submitted: unknown;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>(async (url, options) => {
+        if (String(url).endsWith('/auth/email')) return new Response(null);
+        if (String(url).endsWith('/auth/login')) {
+          submitted = JSON.parse(String(options?.body));
+          return new Response(JSON.stringify(auth));
+        }
+        if (String(url).endsWith('/activity/list'))
+          return new Response(JSON.stringify({ data: [], nextId: null }));
+        throw new Error('Unexpected endpoint');
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(screen.getByLabelText('Email address'), 'test@example.test');
+    await user.click(screen.getByRole('button', { name: 'Get a code' }));
+    const code = await screen.findByRole('textbox', { name: 'Email code' });
+    await user.click(code);
+    await user.paste(pasted);
+    expect((code as HTMLInputElement).value).toBe('1234-5678');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    await screen.findByRole('heading', { name: 'Notifications' });
+    expect(submitted).toEqual({ email: 'test@example.test', code: 12345678 });
+  });
+
   it('keeps invalid email and incomplete code out of the API', async () => {
     const fetcher = vi.fn<typeof fetch>(async (url) => {
       if (String(url).endsWith('/auth/email')) return new Response(null);

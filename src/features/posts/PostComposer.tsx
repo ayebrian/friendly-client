@@ -38,75 +38,76 @@ export function PostComposer({
     onDirtyChange?.(dirty);
     return () => onDirtyChange?.(false);
   }, [dirty, onDirtyChange]);
-  useUnsavedChanges(form.formState.isDirty && !pending);
+  const guard = useUnsavedChanges(form.formState.isDirty && !pending);
   return (
-    <form
-      className={`composer${compact ? ' composer-compact' : ''}`}
-      noValidate
-      onSubmit={form.handleSubmit(async ({ text }) => {
-        setError('');
-        try {
-          await onSubmit(text);
-          form.reset({ text: '' });
-        } catch (err) {
-          setError(errorMessage(err));
-        }
-      })}
-    >
-      <Field data-invalid={!!form.formState.errors.text}>
-        <FieldLabel htmlFor="post-text" className={compact ? 'sr-only' : undefined}>
-          {label}
-        </FieldLabel>
-        {preview ? (
-          <div className="composer-preview">
-            <Markdown text={form.getValues('text') || 'Your preview will appear here.'} />
-          </div>
-        ) : (
-          <Textarea
-            id="post-text"
-            className={compact ? 'composer-input' : undefined}
-            rows={compact ? 2 : 5}
-            placeholder="What is on your mind?"
-            autoComplete="off"
-            disabled={pending}
-            aria-invalid={!!form.formState.errors.text}
-            aria-describedby="post-text-error"
-            {...form.register('text')}
-          />
+    <>
+      <form
+        className={`composer${compact ? ' composer-compact' : ''}`}
+        noValidate
+        onSubmit={form.handleSubmit(async ({ text }) => {
+          setError('');
+          try {
+            await onSubmit(text);
+            form.reset({ text: '' });
+          } catch (err) {
+            setError(errorMessage(err));
+          }
+        })}
+      >
+        <Field data-invalid={!!form.formState.errors.text}>
+          <FieldLabel htmlFor="post-text" className={compact ? 'sr-only' : undefined}>
+            {label}
+          </FieldLabel>
+          {preview ? (
+            <div className="composer-preview">
+              <Markdown text={form.getValues('text') || 'Your preview will appear here.'} />
+            </div>
+          ) : (
+            <Textarea
+              id="post-text"
+              className={compact ? 'composer-input' : undefined}
+              rows={compact ? 2 : 5}
+              placeholder="What is on your mind?"
+              autoComplete="off"
+              disabled={pending}
+              aria-invalid={!!form.formState.errors.text}
+              aria-describedby="post-text-error"
+              {...form.register('text')}
+            />
+          )}
+          <FieldError id="post-text-error" errors={[form.formState.errors.text]} />
+        </Field>
+        {!compact && (
+          <p className="field-hint">
+            Markdown supported: **bold**, [link](https://…), ![description](image URL).
+          </p>
         )}
-        <FieldError id="post-text-error" errors={[form.formState.errors.text]} />
-      </Field>
-      {!compact && (
-        <p className="field-hint">
-          Markdown supported: **bold**, [link](https://…), ![description](image URL).
-        </p>
-      )}
-      {error && <ErrorNotice message={error} />}
-      <div className="form-actions">
-        <Button
-          type="button"
-          variant="ghost"
-          disabled={pending}
-          onClick={() => setPreview((v) => !v)}
-        >
-          {preview ? 'Editor' : 'Preview'}
-        </Button>
-        {onCancel && (
+        {error && <ErrorNotice message={error} />}
+        <div className="form-actions">
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             disabled={pending}
-            onClick={() => {
-              if (!form.formState.isDirty || window.confirm('Discard your draft?')) onCancel();
-            }}
+            onClick={() => setPreview((v) => !v)}
           >
-            Cancel
+            {preview ? 'Editor' : 'Preview'}
           </Button>
-        )}
-        <Button type="submit" disabled={pending}>
-          {pending ? 'Sending…' : submitLabel}
-        </Button>
-      </div>
-    </form>
+          {onCancel && (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pending}
+              onClick={() => guard.confirmDiscard(onCancel)}
+            >
+              Cancel
+            </Button>
+          )}
+          <Button type="submit" disabled={pending}>
+            {pending ? 'Sending…' : submitLabel}
+          </Button>
+        </div>
+      </form>
+      {guard.confirmation}
+    </>
   );
 }

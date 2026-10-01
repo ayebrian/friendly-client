@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -26,26 +26,36 @@ export function LoginPage({ gateway, onLogin, onDemo, notice }: Props) {
   const [email, setEmail] = useState('');
   const [stage, setStage] = useState<'email' | 'code'>('email');
   const [error, setError] = useState('');
+  const [lifetime] = useState(() => ({ current: new AbortController() }));
+  useEffect(() => {
+    lifetime.current = new AbortController();
+    return () => lifetime.current.abort();
+  }, [lifetime]);
   const emailForm = useForm({ resolver: zodResolver(emailSchema), defaultValues: { email: '' } });
   const codeForm = useForm({ resolver: zodResolver(codeSchema), defaultValues: { code: '' } });
   const pending = emailForm.formState.isSubmitting || codeForm.formState.isSubmitting;
 
   async function sendCode(values: { email: string }) {
+    const signal = lifetime.current.signal;
     setError('');
     try {
-      await gateway.sendLoginCode(values.email);
+      await gateway.sendLoginCode(values.email, signal);
+      signal.throwIfAborted();
       setEmail(values.email);
       setStage('code');
     } catch (error) {
-      setError(errorMessage(error));
+      if (!signal.aborted) setError(errorMessage(error));
     }
   }
   async function login(values: { code: string }) {
+    const signal = lifetime.current.signal;
     setError('');
     try {
-      onLogin(await gateway.login(email, values.code.replace(/\D/g, '')));
+      const authorization = await gateway.login(email, values.code.replace(/\D/g, ''), signal);
+      signal.throwIfAborted();
+      onLogin(authorization);
     } catch (error) {
-      setError(errorMessage(error));
+      if (!signal.aborted) setError(errorMessage(error));
     }
   }
 
@@ -110,12 +120,12 @@ export function LoginPage({ gateway, onLogin, onDemo, notice }: Props) {
                       autoFocus
                       inputMode="numeric"
                       autoComplete="one-time-code"
-                      maxLength={9}
                       placeholder="0000-0000"
                       className="tracking-widest tabular-nums"
                       aria-invalid={fieldState.invalid}
                       aria-describedby={`code-hint${fieldState.invalid ? ' code-error' : ''}`}
                       onChange={(event) => {
+                        // Native maxLength truncates pasted whitespace/separators before this handler.
                         const digits = event.target.value.replace(/\D/g, '').slice(0, 8);
                         field.onChange(
                           digits.length > 4 ? `${digits.slice(0, 4)}-${digits.slice(4)}` : digits,

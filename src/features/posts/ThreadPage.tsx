@@ -82,12 +82,13 @@ function Thread() {
         [],
     ).values(),
   ];
-  const card = (post: Post, isMain = false) => (
+  const card = (post: Post, isMain = false, replyTo?: Post) => (
     <PostCard
       key={post.id}
       post={post}
       main={isMain}
       busy={operation.isPending}
+      replyTo={replyTo}
       onReply={() => openEditor({ mode: 'reply', post })}
       onEdit={() => openEditor({ mode: 'edit', post })}
       onDelete={async () => {
@@ -117,10 +118,12 @@ function Thread() {
                 {!!main.upstream.length && (
                   <details className="upstream" open>
                     <summary>Earlier in the conversation</summary>
-                    {main.upstream.map((post) => card(post))}
+                    {main.upstream.map((post, index) =>
+                      card(post, false, main.upstream[index - 1]),
+                    )}
                   </details>
                 )}
-                {card(main.post, true)}
+                {card(main.post, true, main.upstream.at(-1))}
                 {editor && (
                   <div className="thread-editor" id="thread-editor" ref={editorElement}>
                     <PostComposer
@@ -147,7 +150,9 @@ function Thread() {
                   <div className="reply-branches">
                     {branches.map((branch) => (
                       <div key={branch.posts[0].id} className={`reply-branch ${branch.type}`}>
-                        {branch.posts.map((post) => card(post))}
+                        {branch.posts.map((post, index) =>
+                          card(post, false, index ? branch.posts[index - 1] : main.post!),
+                        )}
                       </div>
                     ))}
                   </div>

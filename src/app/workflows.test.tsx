@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, screen, waitFor } from '@testing-library/react';
+import { renderApp as render } from './render-app.test-utils';
 import userEvent from '@testing-library/user-event';
 import { App } from './App';
 
@@ -43,6 +44,72 @@ const event = {
 const auth = { id: 1, token: 'test-token', accessHash: 'test-hash' };
 
 describe('feed, drafts and form recovery', () => {
+  it('blocks browser Back, keeps the draft on cancellation and only discards with confirmation', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole('button', { name: 'Try the demo' }));
+    await user.click(await screen.findByRole('link', { name: 'Home' }));
+    await user.click(screen.getByRole('link', { name: 'New post' }));
+    const input = await screen.findByRole('textbox', { name: 'New post' });
+    await user.type(input, 'Keep this browser-history draft');
+
+    await act(async () => history.back());
+    await screen.findByRole('alertdialog');
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }));
+    await waitFor(() => expect(location.pathname).toBe('/compose'));
+    expect((input as HTMLTextAreaElement).value).toBe('Keep this browser-history draft');
+    const unload = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+
+    await act(async () => history.back());
+    await screen.findByRole('alertdialog');
+    await user.click(screen.getByRole('button', { name: 'Discard changes' }));
+    await waitFor(() => expect(location.pathname).toBe('/community'));
+    await act(async () => history.forward());
+    await screen.findByRole('heading', { name: 'Create a post' });
+    expect((screen.getByRole('textbox', { name: 'New post' }) as HTMLTextAreaElement).value).toBe(
+      '',
+    );
+  });
+
+  it('guards link navigation and explicit cancellation without a second discard prompt', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole('button', { name: 'Try the demo' }));
+    await user.click(await screen.findByRole('link', { name: 'My profile' }));
+    await user.click(await screen.findByRole('link', { name: 'Edit' }));
+    const input = await screen.findByLabelText('Name');
+    await user.clear(input);
+    await user.type(input, 'Unsaved profile name');
+    await user.click(screen.getByRole('link', { name: 'People' }));
+    await screen.findByRole('alertdialog');
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }));
+    expect((input as HTMLInputElement).value).toBe('Unsaved profile name');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await screen.findByRole('alertdialog');
+    await user.click(screen.getByRole('button', { name: 'Discard changes' }));
+    await screen.findByRole('heading', { name: 'My profile' });
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Alex' })).toBeTruthy();
+  });
+
+  it('starts new routes at the top and restores the previous position on browser Back', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole('button', { name: 'Try the demo' }));
+    await user.click(await screen.findByRole('link', { name: 'Home' }));
+    await screen.findAllByRole('link', { name: 'Read thread' });
+    vi.stubGlobal('scrollY', 320);
+    await user.click(screen.getAllByRole('link', { name: 'Read thread' })[0]);
+    await screen.findByRole('heading', { name: 'Thread' });
+    expect(window.scrollTo).toHaveBeenLastCalledWith(0, 0);
+    vi.stubGlobal('scrollY', 0);
+    await act(async () => history.back());
+    await screen.findByRole('heading', { name: 'Home' });
+    expect(window.scrollTo).toHaveBeenLastCalledWith(0, 320);
+  });
+
   it('preserves an inline publication after a failed request and refreshes the feed on retry', async () => {
     sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
     history.replaceState(null, '', '/community');

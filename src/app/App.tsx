@@ -1,5 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, useNavigate } from 'react-router';
+import {
+  Link,
+  Navigate,
+  NavLink,
+  Route,
+  Routes,
+  ScrollRestoration,
+  useLocation,
+  useNavigate,
+} from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   Bell,
@@ -83,7 +92,7 @@ export function App() {
   return (
     <PreferencesProvider>
       <TooltipProvider delayDuration={300}>
-        <BrowserRouter>
+        <>
           {session ? (
             <SessionApp session={session} logout={actions.logout} expire={actions.expire} />
           ) : (
@@ -108,7 +117,8 @@ export function App() {
               />
             </Routes>
           )}
-        </BrowserRouter>
+          <ScrollRestoration />
+        </>
       </TooltipProvider>
     </PreferencesProvider>
   );
@@ -235,6 +245,8 @@ function Shell({
 }) {
   const { query, announcement, dismissAnnouncement, mutationError } = useActivity();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const showMobileCompose = ['/community', '/activity', '/profile'].includes(pathname);
   const count = unreadCount(query.data);
   const label = countLabel(query.data);
   const showBadge = count > 0 || query.data?.complete === false;
@@ -296,7 +308,10 @@ function Shell({
               <span>Profile</span>
             </NavLink>
           </nav>
-          <Button asChild className="nav-compose">
+          <Button
+            asChild
+            className={`nav-compose${showMobileCompose ? '' : ' nav-compose-desktop'}`}
+          >
             <Link to="/compose" aria-label="New post">
               <SquarePen />
               <span>New post</span>

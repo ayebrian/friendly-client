@@ -28,6 +28,7 @@ export function PostCard({
   onEdit,
   onDelete,
   busy = false,
+  replyTo,
 }: {
   post: Post;
   main?: boolean;
@@ -35,6 +36,7 @@ export function PostCard({
   onEdit?: () => void;
   onDelete?: () => Promise<unknown>;
   busy?: boolean;
+  replyTo?: Post;
 }) {
   const { userId } = useRuntime();
   const participants = [...new Set(post.replyPreviews?.map((p) => p.nickname))]
@@ -51,6 +53,14 @@ export function PostCard({
         </div>
       )}
       <div className="post-content">
+        {replyTo && (
+          <p className="reply-context">
+            Replying to{' '}
+            <Link to={postPath(replyTo)}>
+              {replyTo.deleted ? 'a deleted post' : replyTo.owner.nickname}
+            </Link>
+          </p>
+        )}
         <header className="post-header">
           {post.deleted ? (
             <span className="muted">Post deleted</span>
