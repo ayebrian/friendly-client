@@ -96,8 +96,8 @@ Worker на Cloudflare edge. Эхосервис httpbingo.org не получи�
 ни в одном возвращённом заголовке; добавленный принимающей инфраструктурой
 `X-Forwarded-For` не содержал IP клиента. Положительный контроль с тестовым
 `CF-Connecting-IP` и `X-Forwarded-For` подтвердил, что эхосервис действительно
-возвращает эти заголовки. Без фиксированного User-Agent этот эхосервис возвращал 402. Временный диагностический Worker удалён; production image-proxy не публиковался.
-При публикации повторить проверку для окончательного hostname и конфигурации.
+возвращает эти заголовки. Без фиксированного User-Agent этот эхосервис возвращал 402.
+Временный диагностический Worker удалён. Эта проверка выполнялась до production-деплоя.
 
 Проверка Workers Cache на edge (2026-10-01): временный стенд с текущей функцией
 cache-policy, некешируемым gateway и кешируемым `ImageCache` подтвердил `MISS → HIT`
@@ -112,6 +112,24 @@ Origin получал HIT с собственным CORS-заголовком. �
 
 ## Публикация
 
+Production включён 2026-10-01:
+
+- Worker: `https://friendly-image-proxy.hausmer.workers.dev/image`.
+- Клиент: `https://friendly.hausmer.com`, Pages project `friendly-client`.
+- В production env Pages установлен `VITE_IMAGE_PROXY_URL` на URL выше.
+- Код Worker опубликован из коммита `d9d1dbc`; SHA-256 загруженного bundle совпал
+  с локальной сборкой: `dfa4714718dc567079668e75c1f8089456aa9c52e9a6f49e70cd8c9ff4028ede`.
+- Деплой выполнен через авторизованный Cloudflare API; локальный Wrangler всё ещё
+  требует входа для следующих запусков `proxy:deploy`.
+
+На опубликованном Worker проверены PNG с GitHub CDN (`MISS → HIT`), CORS для обоих
+разрешённых origins, отклонение чужого Origin, HTTP URL, IP literal, приватного
+DNS-ответа и SVG. На production-клиенте в Chromium 1440/360px проверены автоматическая
+картинка и Retry без прямого запроса браузера к источнику. Для этого smoke-теста
+данные Friendly API подставлялись в браузере; клиент, Worker и источник картинки
+использовались настоящие. CSP не блокировал картинки, но блокировал отдельно
+вставленные Cloudflare скрипты beacon и JavaScript Detections. Политика CSP не ослаблялась.
+
 Конфигурация направлена в аккаунт Cloudflare, где расположен Friendly Pages:
 `01bfd1aca32d255a115b04fdd0351f97`. Перед публикацией проверить доступ и отсутствие
 другого сервиса с именем `friendly-image-proxy`; namespace `11371` должен быть
@@ -125,14 +143,15 @@ npm run proxy:deploy
 
 Команда deploy явно выбирает верхний production environment. Авторизацию выполнить
 через Wrangler login или секрет CI `CLOUDFLARE_API_TOKEN`; токен не записывать в код,
-URL, логи или Vite env. В текущем окружении `wrangler whoami` сообщил об отсутствии
-входа, поэтому remote deploy и проверка production-кеша не выполнялись.
+URL, логи или Vite env.
 
 После deploy взять выданный HTTPS URL Worker, добавить `/image`, установить
 `VITE_IMAGE_PROXY_URL` в production env Pages и пересобрать frontend. Пока этот
 адрес не настроен, клиент не пытается обращаться к отсутствующему proxy. Проверить
 на production автоматическую картинку, повторный запрос/кеш, приватный DNS target,
 ошибку/Retry и правильный CORS. Отдельный custom domain можно добавить позднее.
+Pages автоматически пересобирается при push в `main`; Worker публикуется отдельно
+командой `proxy:deploy`. CI проверяет упаковку Worker, но не выполняет его deploy.
 
 Logs включены, автоматические invocation logs и traces отключены. Автоматические
 fetch spans сохраняют `url.full`/`url.query`, в которых могут находиться токены
