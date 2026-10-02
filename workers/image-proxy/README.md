@@ -133,6 +133,24 @@ DNS-ответа и SVG. На production-клиенте в Chromium 1440/360px �
 использовались настоящие. CSP не блокировал картинки, но блокировал отдельно
 вставленные Cloudflare скрипты beacon и JavaScript Detections. Политика CSP не ослаблялась.
 
+Production исправлен 2026-10-02: фотографии Friendly API приходили с
+`Content-Type: application/octet-stream`, поэтому Worker отвечал 415. Для generic
+binary ответов добавлено определение разрешённого raster формата по сигнатуре.
+Проверены реальные посты 6837 и 6817: PNG/JPEG теперь возвращаются с 200 и image MIME.
+HTML, SVG, неизвестный binary и несоответствие заявленного image MIME сигнатуре
+по-прежнему отклоняются.
+
+Код исправления — `6f143fa`. Через API Replace Worker Script Content обновлён только
+bundle; настройки, bindings и exports сохранены. Активная версия
+`9a620b78-ec0d-4e43-88e2-c5bf7e0022f2`, deployment
+`63e089d7-b307-4b69-a326-5c921a3f73a2` (100%). SHA-256 скачанного production-модуля
+совпал с локальной сборкой:
+`5de7d091088d8552265b35acfcb179d61aa4cc0e12d88b0018eb08a3d21e8e18`.
+`npm run check` прошёл 131 тест (62 клиента и 69 Worker), обе сборки прошли.
+В Chromium на 1440/360px настоящая production-лента тестового аккаунта загрузила
+три proxied изображения; проверены dialog, отсутствие overflow, ошибка/Retry
+и отсутствие прямых запросов браузера к источникам этих proxied картинок.
+
 Конфигурация направлена в аккаунт Cloudflare, где расположен Friendly Pages:
 `01bfd1aca32d255a115b04fdd0351f97`. Перед публикацией проверить доступ и отсутствие
 другого сервиса с именем `friendly-image-proxy`; namespace `11371` должен быть
