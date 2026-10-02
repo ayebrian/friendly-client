@@ -23,6 +23,9 @@ HTTP-клиент может подставить Origin самостоятел�
 - Максимум 5 000 000 байт; проверяется Content-Length и фактический поток, даже
   если длина не объявлена. Таймаут 12 секунд охватывает DNS, headers и тело.
 - Разрешённые raster MIME дополнительно проверяются по начальным байтам.
+  Если источник отдаёт `application/octet-stream`, `binary/octet-stream` или
+  не указывает Content-Type, формат определяется по сигнатуре PNG/JPEG/GIF/WebP/AVIF.
+  Worker выдаёт соответствующий image MIME; произвольные binary downloads запрещены.
   SVG, HTML и неподдерживаемые типы не выдаются. Ответ имеет `nosniff` и CSP.
 - Во внешние запросы не переносятся cookie, Authorization, Friendly headers,
   referrer, User-Agent или IP-заголовки клиента. User-Agent фиксирован:

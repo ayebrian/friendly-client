@@ -176,8 +176,57 @@ describe('image Worker', () => {
     ['image/svg+xml', '<svg><script>unsafe</script></svg>'],
     ['text/html', '<html>unsafe</html>'],
     ['image/png', '<html>spoofed content type</html>'],
+    ['application/octet-stream', '<html>generic executable content</html>'],
+    ['binary/octet-stream', '<svg><script>unsafe</script></svg>'],
+    ['application/octet-stream', 'arbitrary binary download'],
   ])('rejects executable or spoofed media %s', async (type, body) => {
     upstream(() => new Response(body, { headers: { 'Content-Type': type } }));
+    expect((await loadImage(source, 'proxy.example.com')).status).toBe(415);
+  });
+
+  it.each([
+    ['image/png', png],
+    ['image/jpeg', new Uint8Array([255, 216, 255, ...new Array<number>(64).fill(0)])],
+    ['image/gif', new TextEncoder().encode('GIF89a' + '0'.repeat(64))],
+    ['image/webp', new TextEncoder().encode('RIFF0000WEBP' + '0'.repeat(64))],
+    ['image/avif', new TextEncoder().encode('0000ftypavif' + '0'.repeat(64))],
+  ])('identifies %s in a generic binary download', async (type, bytes) => {
+    upstream(
+      () => new Response(bytes, { headers: { 'Content-Type': 'application/octet-stream' } }),
+    );
+    const response = await request();
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Content-Type')).toBe(type);
+    expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff');
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
+  });
+
+  it.each([null, 'binary/octet-stream', 'Application/Octet-Stream; charset=binary'])(
+    'identifies a fragmented PNG with generic Content-Type %s',
+    async (type) => {
+      upstream(() => {
+        let offset = 0;
+        return new Response(
+          new ReadableStream({
+            pull(controller) {
+              if (offset === png.length) return controller.close();
+              controller.enqueue(png.subarray(offset, ++offset));
+            },
+          }),
+          { headers: type ? { 'Content-Type': type } : {} },
+        );
+      });
+      const response = await loadImage(source, 'proxy.example.com');
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Content-Type')).toBe('image/png');
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(png);
+    },
+  );
+
+  it('rejects a missing MIME without a raster signature and mismatched raster MIME', async () => {
+    upstream(() => new Response(new TextEncoder().encode('<svg>unsafe</svg>')));
+    expect((await loadImage(source, 'proxy.example.com')).status).toBe(415);
+    upstream(() => new Response(png, { headers: { 'Content-Type': 'image/jpeg' } }));
     expect((await loadImage(source, 'proxy.example.com')).status).toBe(415);
   });
 

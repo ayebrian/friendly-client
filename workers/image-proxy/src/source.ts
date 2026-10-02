@@ -5,6 +5,7 @@ export const MAX_IMAGE_BYTES = 5_000_000;
 const TIMEOUT_MS = 12_000;
 const REDIRECTS = new Set([301, 302, 303, 307, 308]);
 const TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif']);
+const GENERIC_TYPES = new Set(['', 'application/octet-stream', 'binary/octet-stream']);
 
 export class ProxyError extends Error {
   constructor(
@@ -153,9 +154,10 @@ export async function loadImage(source: string, proxyHost: string) {
       await response.body?.cancel();
       throw new ProxyError(response.status === 404 ? 404 : 502, 'upstream_failed');
     }
-    const type = response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() ?? '';
+    const declaredType =
+      response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() ?? '';
     stage = 'image';
-    if (!TYPES.has(type)) {
+    if (!TYPES.has(declaredType) && !GENERIC_TYPES.has(declaredType)) {
       await response.body.cancel();
       throw new ProxyError(415, 'unsupported_image');
     }
@@ -183,8 +185,13 @@ export async function loadImage(source: string, proxyHost: string) {
       prefix.set(head, prefixSize);
       prefixSize += head.length;
     }
-    if (!validSignature(prefix.subarray(0, prefixSize), type))
-      throw new ProxyError(415, 'unsupported_image');
+    const signature = prefix.subarray(0, prefixSize);
+    // Upload services can return raster images as generic binary downloads.
+    // Only infer an allowlisted raster type; never relay the generic MIME.
+    const type = GENERIC_TYPES.has(declaredType)
+      ? [...TYPES].find((candidate) => validSignature(signature, candidate))
+      : declaredType;
+    if (!type || !validSignature(signature, type)) throw new ProxyError(415, 'unsupported_image');
     const upstream = reader;
     const stop = () => {
       clearTimeout(timer);
