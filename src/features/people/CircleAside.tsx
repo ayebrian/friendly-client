@@ -5,7 +5,7 @@ import { useRuntime } from '../../shared/runtime';
 import { Button } from '../../shared/ui/button';
 
 export function CircleAside() {
-  const { gateway, isDemo } = useRuntime();
+  const { gateway } = useRuntime();
   // Observe the existing account cache. The friends/profile screens own loading it.
   const friends = useQuery({
     queryKey: ['friends'],
@@ -40,7 +40,6 @@ export function CircleAside() {
         </Button>
       </section>
       <div className="context-footer">
-        {isDemo && <p>Demo · sample data</p>}
         <Link to="/settings">Settings</Link>
         <a href="https://getfriend.ly" target="_blank" rel="noreferrer">
           Friendly ↗

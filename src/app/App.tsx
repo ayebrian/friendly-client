@@ -1,5 +1,6 @@
+import { BrandLogo } from '../shared/brand-logo';
 import './validation-policy';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import {
   Link,
   Navigate,
@@ -14,7 +15,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   Bell,
   LogOut,
-  Plus,
   UserRound,
   ChevronDown,
   Newspaper,
@@ -24,7 +24,6 @@ import {
 } from 'lucide-react';
 import type { Authorization } from '../domain/models';
 import { createFriendlyGateway } from '../infrastructure/friendly-gateway';
-import { createDemoGateway } from '../infrastructure/demo-gateway';
 import { sessionStorageAdapter } from '../infrastructure/session-storage';
 import { RuntimeContext } from '../shared/runtime';
 import { ApiError } from '../shared/errors';
@@ -42,6 +41,9 @@ import {
   DropdownMenuSeparator,
 } from '../shared/ui/dropdown-menu';
 import { toast } from 'sonner';
+import { LandingPage } from '../features/session/LandingPage';
+import { InvitationEntryPage } from '../features/session/InvitationEntryPage';
+import { invitationReference, signInDestination } from '../shared/links';
 import { LoginPage } from '../features/session/LoginPage';
 import { ActivityProvider, useActivity } from '../features/activity/ActivityProvider';
 import { ActivityPage } from '../features/activity/ActivityPage';
@@ -61,21 +63,22 @@ import { PreferencesProvider } from '../shared/preferences';
 import { enablePush, disablePush } from '../infrastructure/push';
 
 const baseUrl = import.meta.env.VITE_API_BASE_URL || 'https://api.getfriend.ly';
-type Session = { mode: 'live'; authorization: Authorization } | { mode: 'demo' };
+type Session = { authorization: Authorization };
 
 export function App() {
   const [session, setSession] = useState<Session | null>(() => {
     const authorization = sessionStorageAdapter.read();
-    return authorization ? { mode: 'live', authorization } : null;
+    return authorization ? { authorization } : null;
   });
   const [notice, setNotice] = useState('');
+  const location = useLocation();
   const publicGateway = useMemo(() => createFriendlyGateway({ baseUrl }), []);
   const actions = useMemo(
     () => ({
       login(value: Authorization) {
         sessionStorageAdapter.write(value);
         setNotice('');
-        setSession({ mode: 'live', authorization: value });
+        setSession({ authorization: value });
       },
       logout() {
         sessionStorageAdapter.write(null);
@@ -103,17 +106,21 @@ export function App() {
                 element={<RegisterPage gateway={publicGateway} onLogin={actions.login} />}
               />
               <Route
+                path="/"
+                element={
+                  invitationReference(location) !== null ? (
+                    <InvitationEntryPage notice={notice} />
+                  ) : (
+                    <LandingPage />
+                  )
+                }
+              />
+              <Route path="/invite" element={<InvitationEntryPage notice={notice} />} />
+              <Route path="/redirect/*" element={<InvitationEntryPage notice={notice} />} />
+              <Route
                 path="*"
                 element={
-                  <LoginPage
-                    gateway={publicGateway}
-                    onLogin={actions.login}
-                    onDemo={() => {
-                      setNotice('');
-                      setSession({ mode: 'demo' });
-                    }}
-                    notice={notice}
-                  />
+                  <LoginPage gateway={publicGateway} onLogin={actions.login} notice={notice} />
                 }
               />
             </Routes>
@@ -159,24 +166,6 @@ function SessionApp({
     return () => lifetime.current.abort();
   }, [lifetime]);
   const runtime = useMemo(() => {
-    if (session.mode === 'demo') {
-      const demo = createDemoGateway();
-      return {
-        gateway: demo.gateway,
-        isDemo: true,
-        userId: 1,
-        logout,
-        enablePush: async () => {
-          throw new Error('Push notifications require a real account.');
-        },
-        disablePush: async () => {},
-        dispose: demo.dispose,
-        simulate: () => {
-          demo.simulate();
-          void client.invalidateQueries({ queryKey: ['activity'] });
-        },
-      };
-    }
     const gateway = createFriendlyGateway({
       baseUrl,
       authorization: session.authorization,
@@ -187,7 +176,6 @@ function SessionApp({
       gateway,
       mediaBaseUrl: baseUrl,
       imageProxyUrl: import.meta.env.VITE_IMAGE_PROXY_URL || undefined,
-      isDemo: false,
       userId: session.authorization.id,
       logout: () => {
         lifetime.current.abort();
@@ -196,25 +184,10 @@ function SessionApp({
       },
       enablePush: () => enablePush(gateway, lifetime.current.signal),
       disablePush,
-      dispose: () => {},
     };
-  }, [session, logout, expire, client, lifetime]);
-  // StrictMode cleans up and immediately reattaches the same adapter. Defer disposal
-  // one microtask so only the final detach revokes the session's uploaded files.
-  const attachedAdapters = useRef(new Set<typeof runtime>());
+  }, [session, logout, expire, lifetime]);
   useEffect(() => {
-    const active = attachedAdapters.current;
-    const adapter = runtime;
-    active.add(adapter);
-    return () => {
-      active.delete(adapter);
-      queueMicrotask(() => {
-        if (!active.has(adapter)) adapter.dispose();
-      });
-    };
-  }, [runtime]);
-  useEffect(() => {
-    if (runtime.isDemo || !('serviceWorker' in navigator)) return;
+    if (!('serviceWorker' in navigator)) return;
     const refresh = (event: MessageEvent) => {
       if (event.data?.type === 'friendly:refresh') {
         void client.invalidateQueries({ queryKey: ['activity'] });
@@ -223,7 +196,7 @@ function SessionApp({
     };
     navigator.serviceWorker.addEventListener('message', refresh);
     return () => navigator.serviceWorker.removeEventListener('message', refresh);
-  }, [runtime.isDemo, client]);
+  }, [client]);
   useEffect(
     () => () => {
       void client.cancelQueries();
@@ -244,25 +217,18 @@ function SessionApp({
             mobileOffset={{ bottom: 90, left: 12, right: 12 }}
             containerAriaLabel="App notifications"
           />
-          <Shell isDemo={runtime.isDemo} logout={runtime.logout} simulate={runtime.simulate} />
+          <Shell logout={runtime.logout} />
         </ActivityProvider>
       </QueryClientProvider>
     </RuntimeContext>
   );
 }
 
-function Shell({
-  isDemo,
-  logout,
-  simulate,
-}: {
-  isDemo: boolean;
-  logout: () => void;
-  simulate?: () => void;
-}) {
+function Shell({ logout }: { logout: () => void }) {
   const { query, announcement, dismissAnnouncement, mutationError } = useActivity();
   const navigate = useNavigate();
-  const { pathname } = useLocation();
+  const location = useLocation();
+  const { pathname } = location;
   const showMobileCompose = ['/community', '/activity', '/profile'].includes(pathname);
   const count = unreadCount(query.data);
   const label = countLabel(query.data);
@@ -293,10 +259,13 @@ function Shell({
         <aside className="sidebar">
           <div className="brand-group">
             <Link to="/community" className="wordmark" aria-label="Friendly home">
-              <span className="brand-short">F</span>
-              <span className="brand-full">Friendly</span>
+              <span className="brand-short">
+                <BrandLogo compact />
+              </span>
+              <span className="brand-full">
+                <BrandLogo />
+              </span>
             </Link>
-            {isDemo && <Badge variant="secondary">Demo</Badge>}
           </div>
 
           <nav aria-label="Main navigation">
@@ -336,17 +305,6 @@ function Shell({
           </Button>
           <div className="sidebar-footer">
             <div className="topbar-actions">
-              {isDemo && (
-                <Button
-                  variant="ghost"
-                  className="demo-action"
-                  aria-label="Add activity"
-                  onClick={simulate}
-                >
-                  <Plus />
-                  <span>Add activity</span>
-                </Button>
-              )}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" className="account-menu" aria-label="Account menu">
@@ -356,7 +314,7 @@ function Shell({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" collisionPadding={12} className="min-w-48">
-                  <DropdownMenuLabel>{isDemo ? 'Demo' : 'Friendly'}</DropdownMenuLabel>
+                  <DropdownMenuLabel>Friendly</DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem asChild className="min-h-11">
                     <Link to="/settings">
@@ -378,7 +336,7 @@ function Shell({
                   </DropdownMenuItem>
                   <DropdownMenuItem className="min-h-11" onSelect={logout}>
                     <LogOut />
-                    {isDemo ? 'Exit demo' : 'Sign out'}
+                    Sign out
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -395,20 +353,38 @@ function Shell({
             </div>
           )}
           <Routes>
+            <Route path="/login" element={<Navigate to={signInDestination(location)} replace />} />
+            <Route
+              path="/signup"
+              element={<Navigate to={signInDestination(location, '/settings')} replace />}
+            />
             <Route path="/community" element={<CommunityPage />} />
             <Route path="/compose" element={<ComposePage />} />
             <Route path="/people" element={<PeoplePage />} />
             <Route path="/people/:id/:hash" element={<PersonPage />} />
             <Route path="/friends" element={<FriendsPage />} />
-            <Route path="/invite" element={<InvitePage />} />
-            <Route path="/redirect/:deeplink" element={<InvitePage />} />
+            <Route path="/invite" element={<InvitePage key={pathname + location.hash} />} />
+            <Route path="/redirect/*" element={<InvitePage key={pathname + location.hash} />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/profile/edit" element={<EditProfilePage />} />
             <Route path="/activity" element={<ActivityPage />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/post/:id" element={<ThreadPage />} />
             <Route path="/post/:id/:hash" element={<ThreadPage />} />
-            <Route path="*" element={<Navigate to="/activity" replace />} />
+            <Route
+              path="/"
+              element={
+                <Navigate
+                  to={
+                    invitationReference(location) !== null
+                      ? `/invite${location.hash}`
+                      : '/community'
+                  }
+                  replace
+                />
+              }
+            />
+            <Route path="*" element={<Navigate to="/community" replace />} />
           </Routes>
         </main>
         <CircleAside />

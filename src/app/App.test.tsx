@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, screen, waitFor } from '@testing-library/react';
-import { renderApp as render } from './render-app.test-utils';
+import { renderFixtureApp, renderApp as render } from './render-app.test-utils';
 import userEvent from '@testing-library/user-event';
 import { App } from './App';
 import { StrictMode } from 'react';
@@ -69,6 +69,7 @@ describe('session and notification integration', () => {
         }),
       );
       const user = userEvent.setup();
+      history.replaceState(null, '', '/activity');
       render(<App />);
       await user.type(screen.getByLabelText('Email address'), 'test@example.test');
       await user.click(screen.getByRole('button', { name: 'Get a code' }));
@@ -118,32 +119,6 @@ describe('session and notification integration', () => {
     await waitFor(() => expect(document.title).toBe('(2) Friendly'));
     await screen.findByText('New reply');
   });
-  it('updates badge and announces new events while viewing another route', async () => {
-    const user = userEvent.setup();
-    render(
-      <StrictMode>
-        <App />
-      </StrictMode>,
-    );
-    await user.click(screen.getByRole('button', { name: 'Try the demo' }));
-    await screen.findByRole('heading', { name: 'Notifications' });
-    await waitFor(() => expect(document.title).toBe('(3) Friendly'));
-    await user.click(screen.getByRole('link', { name: 'My profile' }));
-    await screen.findByRole('heading', { name: 'Alex' });
-    await user.click(screen.getByRole('button', { name: 'Add activity' }));
-    await waitFor(() => expect(document.title).toBe('(4) Friendly'));
-    await screen.findByText('New reply');
-    await user.click(screen.getByRole('button', { name: 'View' }));
-    await screen.findByText('New activity arrived while you were on another page.');
-    await user.click(screen.getByRole('button', { name: 'Mark all as read' }));
-    await waitFor(() => expect(document.title).toBe('Friendly'));
-    expect(sessionStorage.getItem('friendly.session.v1')).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Account menu' }));
-    await user.click(screen.getByRole('menuitem', { name: 'Exit demo' }));
-    await screen.findByRole('heading', { name: 'Sign in to Friendly' });
-    expect(screen.queryByText('Marina')).toBeNull();
-  });
-
   it('restores unread status and badge after a failed read', async () => {
     sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
     const fetcher = vi.fn<typeof fetch>(async (url) => {
@@ -154,6 +129,7 @@ describe('session and notification integration', () => {
     });
     vi.stubGlobal('fetch', fetcher);
     const user = userEvent.setup();
+    history.replaceState(null, '', '/activity');
     render(
       <StrictMode>
         <App />
@@ -172,6 +148,7 @@ describe('session and notification integration', () => {
       'fetch',
       vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 401 })),
     );
+    history.replaceState(null, '', '/activity');
     render(
       <StrictMode>
         <App />
@@ -193,6 +170,7 @@ describe('session and notification integration', () => {
     });
     vi.stubGlobal('fetch', fetcher);
     const user = userEvent.setup();
+    history.replaceState(null, '', '/activity');
     render(
       <StrictMode>
         <App />
@@ -231,6 +209,7 @@ describe('forms and keyboard navigation', () => {
       }),
     );
     const user = userEvent.setup();
+    history.replaceState(null, '', '/activity');
     render(<App />);
     await user.type(screen.getByLabelText('Email address'), 'test@example.test');
     await user.click(screen.getByRole('button', { name: 'Get a code' }));
@@ -250,6 +229,7 @@ describe('forms and keyboard navigation', () => {
     });
     vi.stubGlobal('fetch', fetcher);
     const user = userEvent.setup();
+    history.replaceState(null, '', '/activity');
     render(<App />);
     const email = screen.getByLabelText('Email address');
     await user.type(email, 'wrong-email');
@@ -271,10 +251,46 @@ describe('forms and keyboard navigation', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the submitted email stable while sending and allows editing after a failed request', async () => {
+    let finish: ((response: Response) => void) | undefined;
+    let submitted: unknown;
+    const fetcher = vi.fn<typeof fetch>(async (_url, options) => {
+      submitted = JSON.parse(String(options?.body));
+      return new Promise<Response>((resolve) => {
+        finish = resolve;
+      });
+    });
+    vi.stubGlobal('fetch', fetcher);
+    const user = userEvent.setup();
+    history.replaceState(null, '', '/login');
+    render(<App />);
+    const email = screen.getByLabelText('Email address') as HTMLInputElement;
+    await user.type(email, 'first@example.test');
+    await user.click(screen.getByRole('button', { name: 'Get a code' }));
+    await waitFor(() => expect(finish).toBeDefined());
+    expect(screen.getByRole('button', { name: 'Sending code…' }).hasAttribute('disabled')).toBe(
+      true,
+    );
+    await user.type(email, 'changed');
+    expect(email.value).toBe('first@example.test');
+    expect(submitted).toEqual({ email: 'first@example.test' });
+    await act(async () => finish!(new Response(null, { status: 500 })));
+    await screen.findByRole('alert');
+    expect(email.readOnly).toBe(false);
+    await user.clear(email);
+    await user.type(email, 'second@example.test');
+    await user.click(screen.getByRole('button', { name: 'Get a code' }));
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(submitted).toEqual({ email: 'second@example.test' });
+    await act(async () => finish!(new Response(null)));
+    await screen.findByRole('heading', { name: 'Check your email' });
+    expect(screen.getByText('second@example.test')).toBeTruthy();
+    expect((screen.getByLabelText('Email code') as HTMLInputElement).readOnly).toBe(false);
+  });
+
   it('changes the unread filter with arrow keys and presents an empty state', async () => {
     const user = userEvent.setup();
-    render(<App />);
-    await user.click(screen.getByRole('button', { name: 'Try the demo' }));
+    renderFixtureApp(<App />);
     await screen.findAllByText('Marina');
     await user.click(screen.getByRole('button', { name: 'Mark all as read' }));
     await waitFor(() => expect(document.title).toBe('Friendly'));
@@ -295,13 +311,12 @@ describe('forms and keyboard navigation', () => {
 
   it('closes account menu with Escape and returns keyboard focus', async () => {
     const user = userEvent.setup();
-    render(<App />);
-    await user.click(screen.getByRole('button', { name: 'Try the demo' }));
+    renderFixtureApp(<App />);
     await screen.findAllByText('Marina');
     const trigger = screen.getByRole('button', { name: 'Account menu' });
     trigger.focus();
     await user.keyboard('{Enter}');
-    await screen.findByRole('menuitem', { name: 'Exit demo' });
+    await screen.findByRole('menuitem', { name: 'Sign out' });
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(trigger));

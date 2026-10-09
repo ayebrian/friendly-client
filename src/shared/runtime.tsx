@@ -5,12 +5,10 @@ export interface Runtime {
   gateway: FriendlyGateway;
   mediaBaseUrl?: string;
   imageProxyUrl?: string;
-  isDemo: boolean;
   userId: number;
   enablePush: () => Promise<void>;
   disablePush: () => Promise<void>;
   logout: () => void;
-  simulate?: () => void;
 }
 
 export const RuntimeContext = createContext<Runtime | null>(null);

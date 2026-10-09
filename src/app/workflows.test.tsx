@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, screen, waitFor } from '@testing-library/react';
-import { renderApp as render } from './render-app.test-utils';
+import { renderFixtureApp, renderApp as render } from './render-app.test-utils';
 import userEvent from '@testing-library/user-event';
 import { App } from './App';
 
@@ -46,8 +46,7 @@ const auth = { id: 1, token: 'test-token', accessHash: 'test-hash' };
 describe('feed, drafts and form recovery', () => {
   it('blocks browser Back, keeps the draft on cancellation and only discards with confirmation', async () => {
     const user = userEvent.setup();
-    render(<App />);
-    await user.click(screen.getByRole('button', { name: 'Try the demo' }));
+    renderFixtureApp(<App />);
     await user.click(await screen.findByRole('link', { name: 'Home' }));
     await user.click(screen.getByRole('link', { name: 'New post' }));
     const input = await screen.findByRole('textbox', { name: 'New post' });
@@ -73,8 +72,7 @@ describe('feed, drafts and form recovery', () => {
 
   it('guards link navigation and explicit cancellation without a second discard prompt', async () => {
     const user = userEvent.setup();
-    render(<App />);
-    await user.click(screen.getByRole('button', { name: 'Try the demo' }));
+    renderFixtureApp(<App />);
     await user.click(await screen.findByRole('link', { name: 'My profile' }));
     await user.click(await screen.findByRole('link', { name: 'Edit' }));
     const input = await screen.findByLabelText('Name');
@@ -94,8 +92,7 @@ describe('feed, drafts and form recovery', () => {
 
   it('starts new routes at the top and restores the previous position on browser Back', async () => {
     const user = userEvent.setup();
-    render(<App />);
-    await user.click(screen.getByRole('button', { name: 'Try the demo' }));
+    renderFixtureApp(<App />);
     await user.click(await screen.findByRole('link', { name: 'Home' }));
     await screen.findAllByRole('link', { name: 'Read thread' });
     vi.stubGlobal('scrollY', 320);
@@ -188,8 +185,7 @@ describe('feed, drafts and form recovery', () => {
     const user = userEvent.setup();
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     try {
-      render(<App />);
-      await user.click(screen.getByRole('button', { name: 'Try the demo' }));
+      renderFixtureApp(<App />);
       await user.click((await screen.findAllByRole('link', { name: 'Open reply' }))[0]);
       await screen.findByRole('heading', { name: 'Thread' });
       const replies = screen.getAllByRole('button', { name: 'Reply' });
@@ -214,8 +210,7 @@ describe('feed, drafts and form recovery', () => {
 
   it('can clear an invalid avatar selection and still save the profile', async () => {
     const user = userEvent.setup({ applyAccept: false });
-    render(<App />);
-    await user.click(screen.getByRole('button', { name: 'Try the demo' }));
+    renderFixtureApp(<App />);
     await user.click(screen.getByRole('link', { name: 'My profile' }));
     await user.click(await screen.findByRole('link', { name: 'Edit' }));
     await user.upload(
@@ -240,8 +235,7 @@ describe('feed, drafts and form recovery', () => {
     const user = userEvent.setup();
     const write = vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(new Error('Denied'));
     try {
-      render(<App />);
-      await user.click(screen.getByRole('button', { name: 'Try the demo' }));
+      renderFixtureApp(<App />);
       await user.click(screen.getByRole('button', { name: 'Account menu' }));
       await user.click(await screen.findByRole('menuitem', { name: 'Invite a friend' }));
       await user.click(await screen.findByRole('button', { name: 'Create invitation' }));

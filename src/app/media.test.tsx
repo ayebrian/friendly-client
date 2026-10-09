@@ -13,7 +13,7 @@ import { renderApp as render } from './render-app.test-utils';
 import { App } from './App';
 import { Markdown } from '../shared/markdown';
 import { RuntimeContext } from '../shared/runtime';
-import { createDemoGateway } from '../infrastructure/demo-gateway';
+import { createFixtureGateway } from './fixture-gateway.test-utils';
 
 const NativeURL = URL;
 const auth = { id: 1, token: 'test-token', accessHash: 'test-hash' };
@@ -362,9 +362,8 @@ describe('media composing and publishing', () => {
     renderMarkup(
       <RuntimeContext
         value={{
-          gateway: createDemoGateway().gateway,
+          gateway: createFixtureGateway().gateway,
           mediaBaseUrl: 'https://gateway.test/v1',
-          isDemo: false,
           userId: 1,
           enablePush: async () => {},
           disablePush: async () => {},
@@ -399,10 +398,9 @@ describe('media composing and publishing', () => {
     renderMarkup(
       <RuntimeContext
         value={{
-          gateway: createDemoGateway().gateway,
+          gateway: createFixtureGateway().gateway,
           mediaBaseUrl: 'https://gateway.test/v1',
           imageProxyUrl: 'https://proxy.example.com/image',
-          isDemo: false,
           userId: 1,
           enablePush: async () => {},
           disablePush: async () => {},
@@ -449,39 +447,4 @@ describe('media composing and publishing', () => {
     await user.click(screen.getByRole('button', { name: 'Retry image' }));
     expect(screen.getByRole('img', { name: 'Remote' }).getAttribute('src')).toBe(expected.href);
   });
-
-  it.each(['exit', 'unmount'])(
-    'releases published demo files on %s while keeping a mounted StrictMode session usable',
-    async (action) => {
-      history.replaceState(null, '', '/community');
-      const user = userEvent.setup();
-      const view = render(<App />);
-      await user.click(screen.getByRole('button', { name: 'Try the demo' }));
-      const publish = async () => {
-        await user.upload(await screen.findByLabelText('Choose media files'), image());
-        await user.click(screen.getByRole('button', { name: 'Post' }));
-        await waitFor(() =>
-          expect(document.querySelector('.post-list .markdown img')).toBeTruthy(),
-        );
-        return document.querySelector('.post-list .markdown img')!.getAttribute('src');
-      };
-      const source = await publish();
-      expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(source);
-      if (action === 'unmount') view.unmount();
-      else {
-        await user.click(screen.getByRole('button', { name: 'Account menu' }));
-        await user.click(screen.getByRole('menuitem', { name: 'Exit demo' }));
-        await screen.findByRole('heading', { name: 'Sign in to Friendly' });
-      }
-      await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith(source));
-      if (action === 'exit') {
-        await user.click(screen.getByRole('button', { name: 'Try the demo' }));
-        const nextSource = await publish();
-        expect(nextSource).not.toBe(source);
-        expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(nextSource);
-        view.unmount();
-        await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith(nextSource));
-      }
-    },
-  );
 });

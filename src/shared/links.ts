@@ -34,3 +34,42 @@ export function parseInvitation(value: string): { userId: number; token: string 
     return null;
   }
 }
+
+/** Invitation capabilities stay in the fragment through sign-in and reloads. */
+export function invitationReference(location: { pathname: string; hash: string }): string | null {
+  if (location.pathname.startsWith('/redirect/')) {
+    try {
+      return decodeURIComponent(location.pathname.slice('/redirect/'.length));
+    } catch {
+      return '';
+    }
+  }
+  return new URLSearchParams(location.hash.replace(/^#\??/, '')).get('reference');
+}
+
+export function invitationUrl(origin: string, userId: number, token: string): string {
+  return `${origin}/invite#?reference=${encodeURIComponent(`add/${userId}/${token}`)}`;
+}
+
+export function signInDestination(
+  location: { pathname: string; hash: string; state?: unknown },
+  fallback = '/community',
+): string {
+  if (invitationReference(location) !== null) return `/invite${location.hash}`;
+  const destination = (location.state as { returnTo?: unknown } | null)?.returnTo;
+  if (
+    typeof destination === 'string' &&
+    /^\/(?:invite|redirect|community|activity|profile|people|friends|post|compose|settings)(?:[\/#?]|$)/.test(
+      destination,
+    )
+  )
+    return destination;
+  if (
+    /^\/(?:community|activity|profile|people|friends|post|compose|settings)(?:\/|$)/.test(
+      location.pathname,
+    )
+  ) {
+    return location.pathname + location.hash;
+  }
+  return fallback;
+}

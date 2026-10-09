@@ -1,11 +1,11 @@
 import type { FriendlyGateway } from '../domain/gateway';
 import type { ActivityEvent, Person, Post, ReplyBranch } from '../domain/models';
 
-/** A separate, session-scoped sandbox. No request ever reaches Friendly. */
-export function createDemoGateway() {
+/** Test-only stateful gateway. Never imported by the application. */
+export function createFixtureGateway() {
   const self: Person = {
     id: 1,
-    accessHash: 'demo-user-1',
+    accessHash: 'fixture-user-1',
     nickname: 'Alex',
     description:
       'Collecting city stories in photographs. On weekends I explore new routes and independent bookshops.',
@@ -19,7 +19,7 @@ export function createDemoGateway() {
     self,
     {
       id: 2,
-      accessHash: 'demo-user-2',
+      accessHash: 'fixture-user-2',
       nickname: 'Marina',
       description: 'Long walks, architecture, and conversations over coffee.',
       interests: ['Architecture', 'Walking'],
@@ -27,7 +27,7 @@ export function createDemoGateway() {
     },
     {
       id: 3,
-      accessHash: 'demo-user-3',
+      accessHash: 'fixture-user-3',
       nickname: 'Alexey',
       description: 'Reading science fiction and starting a book club.',
       interests: ['Books', 'Films'],
@@ -35,7 +35,7 @@ export function createDemoGateway() {
     },
     {
       id: 4,
-      accessHash: 'demo-user-4',
+      accessHash: 'fixture-user-4',
       nickname: 'Sasha',
       description: 'Looking for company for cycling trips and hikes.',
       interests: ['Cycling', 'Hiking'],
@@ -43,7 +43,7 @@ export function createDemoGateway() {
     },
     {
       id: 5,
-      accessHash: 'demo-user-5',
+      accessHash: 'fixture-user-5',
       nickname: 'Nina',
       description: 'Sketching the city. Always happy to meet up with a sketchbook.',
       interests: ['Drawing', 'City life'],
@@ -55,7 +55,7 @@ export function createDemoGateway() {
   function add(id: number, ownerId: number, text: string, minutes: number, parent?: number) {
     const post = {
       id,
-      accessHash: `demo-post-${id}`,
+      accessHash: `fixture-post-${id}`,
       owner: people.find((p) => p.id === ownerId)!,
       text,
       instant: new Date(Date.now() - minutes * 60_000).toISOString(),
@@ -103,7 +103,7 @@ export function createDemoGateway() {
     isRead: i === 3,
   }));
   let pendingEmail = '';
-  let invite = 'demo-invitation';
+  let invite = 'fixture-invitation';
   const files = new Map<number, string>();
   const clone = <T>(value: T): T => structuredClone(value);
   function person(id: number, accessHash?: string) {
@@ -133,13 +133,13 @@ export function createDemoGateway() {
   }
   const gateway: FriendlyGateway = {
     async sendLoginCode() {
-      throw new Error('There is no need to sign in to the demo.');
+      throw new Error('There is no need to sign in to the fixture.');
     },
     async login() {
-      throw new Error('There is no need to sign in to the demo.');
+      throw new Error('There is no need to sign in to the fixture.');
     },
     async register() {
-      throw new Error('Exit the demo to create a real account.');
+      throw new Error('Exit the fixture to create a real account.');
     },
     async profile() {
       return clone(self);
@@ -156,13 +156,13 @@ export function createDemoGateway() {
     async uploadAvatar(file) {
       const id = ++nextId;
       files.set(id, URL.createObjectURL(file));
-      return { id, accessHash: `demo-file-${id}` };
+      return { id, accessHash: `fixture-file-${id}` };
     },
     async uploadMedia(file, signal) {
       signal?.throwIfAborted();
       const id = ++nextId;
       files.set(id, URL.createObjectURL(file));
-      return { id, accessHash: `demo-file-${id}` };
+      return { id, accessHash: `fixture-file-${id}` };
     },
     fileUrl(file) {
       return files.get(file.id) ?? '';
@@ -192,7 +192,7 @@ export function createDemoGateway() {
       person(id, hash).friendship = 'outgoingDecline';
     },
     async invitation(force) {
-      if (force) invite = `demo-invitation-${++nextId}`;
+      if (force) invite = `fixture-invitation-${++nextId}`;
       return invite;
     },
     async acceptInvitation(id, token) {
@@ -204,7 +204,8 @@ export function createDemoGateway() {
       pendingEmail = email;
     },
     async confirmEmail(code) {
-      if (code !== '12345678' || !pendingEmail) throw new Error('Use 12345678 as the demo code.');
+      if (code !== '12345678' || !pendingEmail)
+        throw new Error('Use 12345678 as the fixture code.');
       self.email = pendingEmail;
       pendingEmail = '';
     },

@@ -22,7 +22,7 @@ const codeSchema = z.object({
 });
 
 export function SettingsPage() {
-  const { gateway, isDemo, enablePush, disablePush } = useRuntime();
+  const { gateway, enablePush, disablePush } = useRuntime();
   const { theme, setTheme } = usePreferences();
   const client = useQueryClient();
   const profile = useQuery({
@@ -129,9 +129,7 @@ export function SettingsPage() {
                   }
                 })}
               >
-                <p>
-                  A code was sent to {sentTo}.{isDemo ? ' Demo code: 12345678.' : ''}
-                </p>
+                <p>A code was sent to {sentTo}.</p>
                 <Field data-invalid={!!codeForm.formState.errors.code}>
                   <FieldLabel htmlFor="email-code">Verification code</FieldLabel>
                   <Controller
@@ -193,47 +191,39 @@ export function SettingsPage() {
           Activity updates automatically while the app is open. Push notifications let you know when
           something happens while you are away.
         </p>
-        {isDemo ? (
-          <p className="demo-note">
-            Push is unavailable in the demo. Use Add activity to try an incoming notification.
-          </p>
-        ) : (
-          <>
-            <div className="inline-actions">
-              <Button
-                disabled={push.isPending}
-                onClick={() => {
-                  void push
-                    .mutateAsync(true)
-                    .then(() => {
-                      setPushEnabled(true);
-                      toast.success('Notifications enabled');
-                    })
-                    .catch(() => {});
-                }}
-              >
-                {push.isPending ? 'Please wait…' : 'Enable notifications'}
-              </Button>
-              <Button
-                variant="outline"
-                disabled={push.isPending}
-                onClick={() => {
-                  void push
-                    .mutateAsync(false)
-                    .then(() => {
-                      setPushEnabled(false);
-                      toast.success('Notifications disabled');
-                    })
-                    .catch(() => {});
-                }}
-              >
-                Disable
-              </Button>
-            </div>
-            {pushEnabled && <p role="status">Notifications are enabled on this device.</p>}
-            {push.isError && <ErrorNotice message={errorMessage(push.error)} />}
-          </>
-        )}
+        <div className="inline-actions">
+          <Button
+            disabled={push.isPending}
+            onClick={() => {
+              void push
+                .mutateAsync(true)
+                .then(() => {
+                  setPushEnabled(true);
+                  toast.success('Notifications enabled');
+                })
+                .catch(() => {});
+            }}
+          >
+            {push.isPending ? 'Please wait…' : 'Enable notifications'}
+          </Button>
+          <Button
+            variant="outline"
+            disabled={push.isPending}
+            onClick={() => {
+              void push
+                .mutateAsync(false)
+                .then(() => {
+                  setPushEnabled(false);
+                  toast.success('Notifications disabled');
+                })
+                .catch(() => {});
+            }}
+          >
+            Disable
+          </Button>
+        </div>
+        {pushEnabled && <p role="status">Notifications are enabled on this device.</p>}
+        {push.isError && <ErrorNotice message={errorMessage(push.error)} />}
       </section>
     </section>
   );

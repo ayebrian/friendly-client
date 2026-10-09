@@ -30,6 +30,28 @@ describe('HTTP and protocol boundary', () => {
     ).rejects.toMatchObject({ status: 401 });
     expect(onUnauthorized).toHaveBeenCalledOnce();
   });
+  it('distinguishes permission failures from sign-in code errors without ending the session', async () => {
+    const onUnauthorized = vi.fn();
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 403 }));
+    await expect(
+      createFriendlyGateway({ baseUrl: '', authorization, fetcher, onUnauthorized }).invitation(
+        false,
+      ),
+    ).rejects.toMatchObject({
+      status: 403,
+      message: 'You do not have permission to perform this action.',
+    });
+    await expect(
+      createFriendlyGateway({ baseUrl: '', fetcher, onUnauthorized }).login(
+        'test@example.test',
+        '12345678',
+      ),
+    ).rejects.toMatchObject({
+      status: 403,
+      message: 'Access denied or your sign-in code has expired.',
+    });
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
   it('handles an empty mutation response', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 204 }));
     await expect(

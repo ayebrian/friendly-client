@@ -25,7 +25,7 @@ sky and Lucide, with the user’s Inter font override, applied to the existing V
 - Login stays in two columns on desktop and one on mobile. Registration uses 620px.
 - Image previews stay within 480px or 65dvh; the existing dialog opens a larger view.
 - English is the current default for navigation, forms, validation, errors, notifications,
-  dates, accessibility labels, push copy and demo content. User content is not translated.
+  dates, accessibility labels, push copy and test fixtures. User content is not translated.
 
 ## Theme
 
@@ -60,7 +60,7 @@ skeleton pulsing. Feed loading uses full post skeletons for initial and addition
 ## States
 
 Preserve loading skeletons, retryable errors, empty states, pending action labels,
-and explicit demo labels. Theme changes affect every route and overlay. Account
+and confirmation before accepting invitations. Theme changes affect every route and overlay. Account
 and notification behavior stays in its existing owners.
 
 ## Preset and implementation
@@ -76,3 +76,61 @@ provider when regenerating them. Sonner consumes the app’s existing theme sett
 
 Preset preview: https://ui.shadcn.com/create?preset=bdw0PGCW
 CLI reference: https://ui.shadcn.com/docs/cli#apply
+
+## Public entry
+
+Reference: an independent community publication, with an editorial manifesto and a clear diagram.
+Mood: personal, calm, candid.
+Palette: the existing paper/ink neutrals and sky accent, with lightly tinted diagram surfaces.
+Typography: the user's Inter throughout, using 700-weight display and lighter reading copy;
+this explicit preference takes precedence over adding a second family.
+Signature: an interactive, labelled social graph explaining friends and friends of friends.
+
+The landing explains why Friendly exists before listing how to join. Its content is based on
+Aλex Meta's March–September 2026 updates supplied by the user and the public project idea:
+https://github.com/friendly-social/knowledge/blob/main/IDEA.md.
+The core is strengthening existing local networks, mutual connections, and a social graph
+instead of recommendations. The creator's Telegram experience is a motivation, not a promise
+that Friendly is immune to bans. Historical user counts, unfinished chat features and dated
+release promises do not become current marketing claims.
+
+A wide, asymmetric hero leads into the project's purpose, a brief attributed founder note,
+and practical steps for connecting, posting and meeting friends of friends. The graphic is
+an explanation, not a preview of fabricated accounts. Diagram controls use shared shadcn
+buttons; account links use the existing working routes. All media is local SVG and bundled
+fonts. Layout, light/dark themes, keyboard controls and reduced motion are checked in-browser
+at 1440px and 360px.
+
+The supplied Friendly.svg is the project wordmark. Its original path geometry is kept in
+`src/shared/brand-logo.tsx`; currentColor follows the theme. All home links use the same
+artwork with an accessible name. The compact sidebar and graph use its original F, clipped
+from the full mark without redrawing it.
+
+## Sign-in
+
+Reference: a focused account form, continuous with the public landing.
+Mood: calm, clear, familiar.
+Palette: shared background/foreground with sky reserved for the submit action and links.
+Typography: Inter, a 32px heading (28px on mobile), 16px entry text and 14px labels.
+Signature: a single 416px reading column, with an explicit email-to-code progression.
+
+The promotional second column is removed so signing in has one visual priority. A home
+header provides a consistent brand and an exit. The form uses a 4/8px spacing rhythm,
+48px inputs and actions, persistent labels, contextual instructions, inline errors and a
+visible keyboard focus. The code screen shows the destination email, accepts paste and
+one-time-code autofill, and allows changing the address. Pending requests explain the
+current operation and keep the submitted address/code read-only. Layout is fluid, not a
+fixed-height card, so errors, long email addresses and text enlargement can expand it.
+
+Sources consulted on 2026-10-05 (the composition is our application of these principles):
+
+- Apple, sizing, readability and alignment: https://developer.apple.com/design/tips/
+- Figma, grid structure and spacing: https://www.figma.com/best-practices/everything-you-need-to-know-about-layout-grids/
+- Microsoft Fluent 2, labels, helper text and validation: https://fluent2.microsoft.design/components/web/react/core/field/usage
+- Google, sign-in form guidance: https://web.dev/articles/sign-in-form-best-practices
+
+Public sign-in and landing footers distinguish this client's repository
+(https://github.com/ayebrian/friendly-client) from the original Friendly organization
+(https://github.com/friendly-social). Links share one component, stay secondary to joining,
+wrap on narrow screens and have 44px targets. On 2026-10-05 the client's GitHub repository
+was verified as private with `gh repo view`; adding the link does not change its visibility.

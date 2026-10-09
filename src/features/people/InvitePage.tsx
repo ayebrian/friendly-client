@@ -5,10 +5,10 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import QRCode from 'react-qr-code';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useLocation, useParams } from 'react-router';
+import { Link, useLocation } from 'react-router';
 import { useRuntime } from '../../shared/runtime';
 import { useOperation } from '../../shared/use-operation';
-import { parseInvitation } from '../../shared/links';
+import { invitationReference, invitationUrl, parseInvitation } from '../../shared/links';
 import { Button } from '../../shared/ui/button';
 import { Input } from '../../shared/ui/input';
 import { Field, FieldLabel, FieldError } from '../../shared/ui/field';
@@ -21,18 +21,19 @@ const schema = z.object({
 });
 
 export function InvitePage() {
-  const { gateway, userId, isDemo } = useRuntime();
+  const { gateway, userId } = useRuntime();
   const client = useQueryClient();
   const location = useLocation();
-  const { deeplink } = useParams();
   const [showInvite, setShowInvite] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [copying, setCopying] = useState(false);
   const [copiedLink, setCopiedLink] = useState('');
   const [copyError, setCopyError] = useState('');
   const invitationInput = useRef<HTMLInputElement>(null);
-  const initialLink =
-    deeplink ?? new URLSearchParams(location.hash.replace(/^#\??/, '')).get('reference') ?? '';
+  const reference = invitationReference(location);
+  const incoming = reference !== null;
+  const initialLink = reference ?? '';
+  const invalid = incoming && !parseInvitation(initialLink);
   const form = useForm({ resolver: zodResolver(schema), defaultValues: { link: initialLink } });
   const query = useQuery({
     queryKey: ['invitation'],
@@ -49,90 +50,98 @@ export function InvitePage() {
     if (result === 'FriendTokenExpired')
       throw new Error('This invitation has expired. Ask your friend for a new link.');
   });
-  const url = query.data
-    ? (isDemo ? `${window.location.origin}/invite` : 'https://getfriend.ly') +
-      `#?reference=${encodeURIComponent(`add/${userId}/${query.data}`)}`
-    : '';
+  const pending = accept.isPending || form.formState.isSubmitting;
+  const url = query.data ? invitationUrl(window.location.origin, userId, query.data) : '';
   return (
     <section className="page-content">
       <PageHeader>
         <div>
-          <h1>Invite a friend</h1>
-          <p>Connect on Friendly with a link or QR code.</p>
+          <h1>{incoming ? 'Accept your invitation' : 'Invite a friend'}</h1>
+          <p>
+            {incoming
+              ? 'Add your friend to your circle on Friendly.'
+              : 'Connect on Friendly with a link or QR code.'}
+          </p>
         </div>
       </PageHeader>
-      {isDemo && <p className="demo-note">Demo: invitations only work within the demo.</p>}
-      {!showInvite ? (
-        <Button onClick={() => setShowInvite(true)}>Create invitation</Button>
-      ) : query.isPending ? (
-        <Loading />
-      ) : query.isError ? (
-        <ErrorNotice message={errorMessage(query.error)} onRetry={() => void query.refetch()} />
-      ) : (
-        <div className="invitation-block">
-          <div className="qr-code">
-            <QRCode value={url} size={192} title="Friendly invitation" />
+      {!incoming &&
+        (!showInvite ? (
+          <Button onClick={() => setShowInvite(true)}>Create invitation</Button>
+        ) : query.isPending ? (
+          <Loading />
+        ) : query.isError ? (
+          <ErrorNotice message={errorMessage(query.error)} onRetry={() => void query.refetch()} />
+        ) : (
+          <div className="invitation-block">
+            <div className="qr-code">
+              <QRCode value={url} size={192} title="Friendly invitation" />
+            </div>
+            <div className="invitation-details">
+              <Field>
+                <FieldLabel htmlFor="invitation-url">Your link</FieldLabel>
+                <Input
+                  ref={invitationInput}
+                  id="invitation-url"
+                  value={url}
+                  readOnly
+                  onFocus={(e) => e.currentTarget.select()}
+                />
+              </Field>
+              <Button
+                disabled={copying}
+                onClick={async () => {
+                  setCopyError('');
+                  setCopying(true);
+                  try {
+                    if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+                    await navigator.clipboard.writeText(url);
+                    setCopiedLink(url);
+                  } catch {
+                    setCopiedLink('');
+                    invitationInput.current?.focus();
+                    invitationInput.current?.select();
+                    setCopyError(
+                      'Automatic copying is unavailable. The link is selected so you can copy it manually.',
+                    );
+                  } finally {
+                    setCopying(false);
+                  }
+                }}
+              >
+                {copying ? 'Copying…' : copiedLink === url ? 'Copied' : 'Copy link'}
+              </Button>
+              <span className="sr-only" role="status">
+                {copiedLink === url ? 'Link copied' : ''}
+              </span>
+              {copyError && <ErrorNotice message={copyError} />}
+              <ConfirmAction
+                title="Replace this invitation?"
+                description="The previous link and QR code will stop working."
+                action="Create new"
+                onConfirm={async () => {
+                  await client.cancelQueries({ queryKey: ['invitation'] });
+                  const token = await regenerate.mutateAsync();
+                  await client.cancelQueries({ queryKey: ['invitation'] });
+                  client.setQueryData(['invitation'], token);
+                  setCopyError('');
+                }}
+              >
+                <Button variant="outline" disabled={regenerate.isPending}>
+                  {regenerate.isPending ? 'Refreshing…' : 'Refresh invitation'}
+                </Button>
+              </ConfirmAction>
+            </div>
           </div>
-          <div className="invitation-details">
-            <Field>
-              <FieldLabel htmlFor="invitation-url">Your link</FieldLabel>
-              <Input
-                ref={invitationInput}
-                id="invitation-url"
-                value={url}
-                readOnly
-                onFocus={(e) => e.currentTarget.select()}
-              />
-            </Field>
-            <Button
-              disabled={copying}
-              onClick={async () => {
-                setCopyError('');
-                setCopying(true);
-                try {
-                  if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
-                  await navigator.clipboard.writeText(url);
-                  setCopiedLink(url);
-                } catch {
-                  setCopiedLink('');
-                  invitationInput.current?.focus();
-                  invitationInput.current?.select();
-                  setCopyError(
-                    'Automatic copying is unavailable. The link is selected so you can copy it manually.',
-                  );
-                } finally {
-                  setCopying(false);
-                }
-              }}
-            >
-              {copying ? 'Copying…' : copiedLink === url ? 'Copied' : 'Copy link'}
-            </Button>
-            <span className="sr-only" role="status">
-              {copiedLink === url ? 'Link copied' : ''}
-            </span>
-            {copyError && <ErrorNotice message={copyError} />}
-            <ConfirmAction
-              title="Replace this invitation?"
-              description="The previous link and QR code will stop working."
-              action="Create new"
-              onConfirm={async () => {
-                const token = await regenerate.mutateAsync();
-                client.setQueryData(['invitation'], token);
-                setCopyError('');
-              }}
-            >
-              <Button variant="outline">Refresh invitation</Button>
-            </ConfirmAction>
-          </div>
-        </div>
+        ))}
+      {invalid && (
+        <ErrorNotice message="This invitation is not valid. Ask your friend for the full link." />
       )}
       <div className="profile-section">
-        <h2>Have an invitation?</h2>
+        {!incoming && <h2>Have an invitation?</h2>}
         <form
           className="editor-form"
           noValidate
           onSubmit={form.handleSubmit(async ({ link }) => {
-            setAccepted(false);
             try {
               await accept.mutateAsync(link);
               await Promise.all(
@@ -141,7 +150,7 @@ export function InvitePage() {
                 ),
               );
               setAccepted(true);
-              form.reset({ link: '' });
+              if (!incoming) form.reset({ link: '' });
             } catch {
               /* error below */
             }
@@ -152,17 +161,30 @@ export function InvitePage() {
             <Input
               id="invite-link"
               autoComplete="off"
-              placeholder="https://getfriend.ly/#?reference=…"
+              disabled={pending}
+              placeholder={`${window.location.origin}/invite#?reference=…`}
               aria-invalid={!!form.formState.errors.link}
               aria-describedby="invite-error"
-              {...form.register('link')}
+              {...form.register('link', {
+                onChange: () => {
+                  setAccepted(false);
+                  accept.reset();
+                },
+              })}
             />
             <FieldError id="invite-error" errors={[form.formState.errors.link]} />
           </Field>
           {accept.isError && <ErrorNotice message={errorMessage(accept.error)} />}
-          {accepted && <p role="status">All set. You are now friends.</p>}
-          <Button type="submit" disabled={accept.isPending}>
-            {accept.isPending ? 'Adding…' : 'Accept invitation'}
+          {accepted && (
+            <>
+              <p role="status">All set. You are now friends.</p>
+              <Button asChild variant="outline">
+                <Link to="/friends">See your friends</Link>
+              </Button>
+            </>
+          )}
+          <Button type="submit" disabled={pending || accepted}>
+            {pending ? 'Adding…' : accepted ? 'Invitation accepted' : 'Accept invitation'}
           </Button>
         </form>
       </div>

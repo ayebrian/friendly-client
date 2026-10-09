@@ -1,4 +1,5 @@
 import { AlertCircle } from 'lucide-react';
+import { cn } from './lib/utils';
 import type { ReactNode } from 'react';
 import { Alert, AlertDescription } from './ui/alert';
 import { Avatar as AvatarPrimitive, AvatarFallback, AvatarImage } from './ui/avatar';
@@ -7,9 +8,17 @@ import { useRuntime } from './runtime';
 import { Button } from './ui/button';
 import { Skeleton } from './ui/skeleton';
 
-export function ErrorNotice({ message, onRetry }: { message: string; onRetry?: () => void }) {
+export function ErrorNotice({
+  message,
+  onRetry,
+  className,
+}: {
+  message: string;
+  onRetry?: () => void;
+  className?: string;
+}) {
   return (
-    <Alert variant="destructive" className="my-4">
+    <Alert variant="destructive" className={cn('my-4', className)}>
       <AlertCircle />
       <AlertDescription>
         <p>{message}</p>
