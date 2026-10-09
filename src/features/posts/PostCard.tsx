@@ -34,6 +34,7 @@ export function PostCard({
   anchorId,
   replyTargetId,
   openThread = false,
+  beforeOpen,
 }: {
   post: Post;
   main?: boolean;
@@ -45,6 +46,7 @@ export function PostCard({
   anchorId?: string;
   replyTargetId?: string;
   openThread?: boolean;
+  beforeOpen?: () => boolean;
 }) {
   const { userId } = useRuntime();
   const participants = (post.replyPreviews ?? [])
@@ -67,6 +69,7 @@ export function PostCard({
           onClick={(event) => {
             // Keep text selection from turning into navigation.
             if (window.getSelection()?.toString()) event.preventDefault();
+            else if (beforeOpen && !beforeOpen()) event.preventDefault();
           }}
         />
       )}
@@ -125,7 +128,7 @@ export function PostCard({
               </Button>
             ) : (
               <Button asChild variant="ghost">
-                <Link to={postPath(post)}>
+                <Link to={postPath(post)} state={{ reply: true }}>
                   <Reply />
                   Reply
                 </Link>

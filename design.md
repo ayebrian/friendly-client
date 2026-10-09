@@ -19,6 +19,10 @@ sky and Lucide, with the user’s Inter font override, applied to the existing V
   the thread has replies, a stack of up to three participant avatars instead of a
   separate “Open thread” link. Hover (fine pointers) and active (touch) feedback use the
   shared `--muted` surface with the standard 150ms transition.
+- Reply from the feed opens the thread with the reply editor already focused; Reply in a
+  thread opens the inline editor for that post. Leaving a thread while a reply draft is
+  unsent asks for confirmation, both for the stretched post link and for the composer’s
+  own navigation guard.
 - The context column observes the existing friends cache. It introduces no extra
   background requests. Discovery and invitation links remain useful before loading friends.
 - At 1100px and below, the context column disappears. From 601–900px the left

@@ -41,6 +41,12 @@ function openThread({
     if (path === '/activity/list') data = { data: [], nextId: null };
     else if (path === '/community/2/10/hash-10')
       data = { post: root, upstream, replies: { data: replies, nextId } };
+    else if (/^\/community\/2\/\d+\/hash-\d+$/.test(path))
+      data = {
+        post: [first, second, last].find((p) => `/community/2/${p.id}/${p.accessHash}` === path),
+        upstream: [],
+        replies: { data: [], nextId: null },
+      };
     else if (path === '/community/10/hash-10/replies2/next')
       data = { data: [{ type: 'single', post: post(14, 'Another direct reply.') }], nextId: null };
     else if (path === '/community') data = { id: 20, accessHash: 'new-hash' };
@@ -141,6 +147,34 @@ describe('reply context', () => {
       text: 'Meet at six.',
       replyTo: { id: 11, accessHash: 'hash-11' },
     });
+  });
+
+  it('asks before leaving a thread with an unsent reply draft', async () => {
+    const user = userEvent.setup();
+    openThread({ replies: [{ type: 'single', post: first }] });
+    await screen.findByText('The park entrance.');
+    await user.click(
+      within(document.getElementById('post-10')!).getByRole('button', { name: 'Reply' }),
+    );
+    await user.type(
+      await screen.findByRole('textbox', { name: 'Reply to Same author' }),
+      'Half-written thought',
+    );
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const open = document.getElementById('post-11')!.querySelector('.post-open')!;
+    fireEvent.click(open);
+    expect(confirm).toHaveBeenCalledWith('Open another thread and discard your draft?');
+    expect(location.pathname).toBe('/post/10/hash-10');
+    expect(screen.getByRole('textbox', { name: 'Reply to Same author' }).textContent).toBe(
+      'Half-written thought',
+    );
+    confirm.mockReturnValue(true);
+    fireEvent.click(open);
+    // The composer's own navigation guard confirms the discard, then the route changes.
+    await user.click(await screen.findByRole('button', { name: 'Discard changes' }));
+    await waitFor(() => expect(location.pathname).toBe('/post/11/hash-11'));
+    expect(screen.queryByRole('textbox', { name: 'Reply to Same author' })).toBeNull();
+    confirm.mockRestore();
   });
 
   it('renders deleted and media-only parents without downloading media or nesting interactive content', async () => {

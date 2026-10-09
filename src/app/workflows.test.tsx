@@ -135,6 +135,17 @@ describe('feed, drafts and form recovery', () => {
     vi.restoreAllMocks();
   });
 
+  it('prepares the reply editor when Reply is used from the feed', async () => {
+    const user = userEvent.setup();
+    renderFixtureApp(<App />);
+    await user.click(await screen.findByRole('link', { name: 'Home' }));
+    // The first feed post is 12, owned by Alex (self).
+    await user.click((await screen.findAllByRole('link', { name: 'Reply' }))[0]);
+    await screen.findByRole('heading', { name: 'Thread' });
+    // The feed Reply click carries state; the thread opens the editor for the main post.
+    await screen.findByRole('textbox', { name: 'Reply to Alex' });
+  });
+
   it('preserves an inline publication after a failed request and refreshes the feed on retry', async () => {
     sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
     history.replaceState(null, '', '/community');

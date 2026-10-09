@@ -22,7 +22,7 @@ function Thread() {
   const { gateway } = useRuntime();
   const client = useQueryClient();
   const { id, hash } = useParams();
-  const state = useLocation().state as { accessHash?: string } | null;
+  const state = useLocation().state as { accessHash?: string; reply?: boolean } | null;
   const accessHash = hash || state?.accessHash || '';
   const postId = Number(id);
   const valid = Number.isSafeInteger(postId) && postId >= 0 && !!accessHash;
@@ -33,6 +33,9 @@ function Thread() {
   const handleDirtyChange = useCallback((dirty: boolean) => {
     editorDirty.current = dirty;
   }, []);
+  // A Reply click from the feed arrives with this flag; open the editor once.
+  const [autoReply] = useState(() => !!state?.reply);
+  const autoReplyDone = useRef(!autoReply);
   useEffect(() => {
     if (!editor) return;
     // Focus after the post menu has restored focus to its trigger.
@@ -82,6 +85,11 @@ function Thread() {
     );
   };
   const main = query.data?.pages[0];
+  useEffect(() => {
+    if (autoReplyDone.current || !main?.post || editor) return;
+    autoReplyDone.current = true;
+    openEditor({ mode: 'reply', post: main.post });
+  }, [main, editor]);
   const rootPostId = (main?.upstream[0] ?? main?.post)?.id;
   const branches = [
     ...new Map(
@@ -97,6 +105,9 @@ function Thread() {
       replyTargetId={replyTo ? `post-${replyTo.id}` : undefined}
       main={isMain}
       openThread={!isMain}
+      beforeOpen={() =>
+        !editorDirty.current || window.confirm('Open another thread and discard your draft?')
+      }
       busy={operation.isPending || composerBusy}
       replyTo={replyTo?.id === rootPostId ? undefined : replyTo}
       onReply={() => openEditor({ mode: 'reply', post })}
