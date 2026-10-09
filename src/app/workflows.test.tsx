@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { renderFixtureApp, renderApp as render } from './render-app.test-utils';
 import userEvent from '@testing-library/user-event';
 import { App } from './App';
@@ -94,15 +94,45 @@ describe('feed, drafts and form recovery', () => {
     const user = userEvent.setup();
     renderFixtureApp(<App />);
     await user.click(await screen.findByRole('link', { name: 'Home' }));
-    await screen.findAllByRole('link', { name: 'Read thread' });
+    const openLinks = await screen.findAllByRole('link', { name: /in a thread$/ });
     vi.stubGlobal('scrollY', 320);
-    await user.click(screen.getAllByRole('link', { name: 'Read thread' })[0]);
+    await user.click(openLinks[0]);
     await screen.findByRole('heading', { name: 'Thread' });
     expect(window.scrollTo).toHaveBeenLastCalledWith(0, 0);
     vi.stubGlobal('scrollY', 0);
     await act(async () => history.back());
     await screen.findByRole('heading', { name: 'Home' });
     expect(window.scrollTo).toHaveBeenLastCalledWith(0, 320);
+  });
+
+  it('opens a thread from a click on the post itself and keeps inner controls clickable', async () => {
+    const user = userEvent.setup();
+    renderFixtureApp(<App />);
+    await user.click(await screen.findByRole('link', { name: 'Home' }));
+    const cardOf = async () =>
+      (await screen.findByText('Small discoveries this week')).closest('article')!;
+    const openOf = async () => (await cardOf()).querySelector('.post-open') as HTMLAnchorElement;
+    // The stretched link covers the card and points at the post's thread.
+    expect((await openOf()).getAttribute('href')).toBe(
+      `/post/12/${encodeURIComponent('fixture-post-12')}`,
+    );
+    // The author link keeps its own destination instead of opening the thread.
+    await user.click(within(await cardOf()).getByRole('link', { name: 'Alex' }));
+    await screen.findByRole('heading', { name: 'My profile' });
+    expect(location.pathname).toBe('/profile');
+    await act(async () => history.back());
+    await screen.findByRole('heading', { name: 'Home' });
+    // Clicking the post body navigates to the thread.
+    await user.click(await openOf());
+    await screen.findByRole('heading', { name: 'Thread' });
+    await act(async () => history.back());
+    await screen.findByRole('heading', { name: 'Home' });
+    // Selecting text must not navigate.
+    const selection = { toString: () => 'some words' } as Selection;
+    vi.spyOn(window, 'getSelection').mockReturnValue(selection);
+    fireEvent.click(await openOf());
+    expect(location.pathname).toBe('/community');
+    vi.restoreAllMocks();
   });
 
   it('preserves an inline publication after a failed request and refreshes the feed on retry', async () => {

@@ -63,7 +63,7 @@ export function CommunityPage() {
       ) : (
         <div className="post-list">
           {items.map((post) => (
-            <PostCard key={post.id} post={post} />
+            <PostCard key={post.id} post={post} openThread />
           ))}
         </div>
       )}

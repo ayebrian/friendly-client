@@ -96,6 +96,7 @@ function Thread() {
       anchorId={`post-${post.id}`}
       replyTargetId={replyTo ? `post-${replyTo.id}` : undefined}
       main={isMain}
+      openThread={!isMain}
       busy={operation.isPending || composerBusy}
       replyTo={replyTo?.id === rootPostId ? undefined : replyTo}
       onReply={() => openEditor({ mode: 'reply', post })}

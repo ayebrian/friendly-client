@@ -13,6 +13,12 @@ sky and Lucide, with the user’s Inter font override, applied to the existing V
 - Every route uses a shared sticky `PageHeader`, with a back action on detail/edit flows.
   Page padding is 16px. Posts have a separate 40px avatar column, inline author/date,
   readable content and a compact action row. The composer follows the same alignment.
+- A post opens its thread from a click on the post itself: a stretched link covers the
+  card, inner controls (author, Reply, media, options) stay on top, and a text selection
+  never navigates. Deleted posts are not clickable. The post footer keeps Reply and, when
+  the thread has replies, a stack of up to three participant avatars instead of a
+  separate “Open thread” link. Hover (fine pointers) and active (touch) feedback use the
+  shared `--muted` surface with the standard 150ms transition.
 - The context column observes the existing friends cache. It introduces no extra
   background requests. Discovery and invitation links remain useful before loading friends.
 - At 1100px and below, the context column disappears. From 601–900px the left
