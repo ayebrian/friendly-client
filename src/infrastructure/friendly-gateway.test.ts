@@ -83,6 +83,30 @@ describe('HTTP and protocol boundary', () => {
     const data = await createFriendlyGateway({ baseUrl: '', fetcher }).activityPage(null);
     expect(data.items[0].kind).toBe('unknown');
   });
+  it('keeps a reply notification for a post that was deleted', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      json({
+        data: [
+          {
+            id: 1,
+            type: 'reply',
+            instant: '2026-09-30T12:00:00Z',
+            isRead: false,
+            post: {
+              type: 'deleted',
+              id: 5,
+              accessHash: 'reply-hash',
+              instant: '2026-09-30T12:00:00Z',
+            },
+          },
+        ],
+        nextId: null,
+      }),
+    );
+    const data = await createFriendlyGateway({ baseUrl: '', fetcher }).activityPage(null);
+    expect(data.items[0].kind).toBe('reply');
+    expect(data.items[0].post?.deleted).toBe(true);
+  });
   it('rejects malformed payloads and unsafe 64-bit IDs', async () => {
     for (const data of [
       { data: 'wrong', nextId: null },

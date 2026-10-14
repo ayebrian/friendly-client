@@ -60,7 +60,7 @@ function mapActivity(value: z.infer<typeof activitySchema>): ActivityEvent {
     instant: value.instant,
     isRead: value.isRead,
     kind: value.type === 'reply' ? 'reply' : 'unknown',
-    post: value.type === 'reply' ? parse(plainPostSchema, value.post) : undefined,
+    post: value.type === 'reply' ? mapPost(value.post) : undefined,
   };
 }
 
