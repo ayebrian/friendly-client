@@ -24,6 +24,7 @@ function backend(
   const fetcher = vi.fn<typeof fetch>(async (url, options) => {
     const path = new URL(String(url)).pathname;
     if (path === '/activity/list') return json({ data: [], nextId: null });
+    if (path === '/auth/logout') return json({});
     if (path === '/auth/email') return new Response(null);
     if (path === '/auth/login' || path === '/auth/generate') return json(auth);
     if (path === '/friends/add') return accept(options);

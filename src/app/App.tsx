@@ -1,6 +1,6 @@
 import { BrandLogo } from '../shared/brand-logo';
 import './validation-policy';
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Link,
   Navigate,
@@ -26,7 +26,7 @@ import type { Authorization } from '../domain/models';
 import { createFriendlyGateway } from '../infrastructure/friendly-gateway';
 import { sessionStorageAdapter } from '../infrastructure/session-storage';
 import { RuntimeContext } from '../shared/runtime';
-import { ApiError } from '../shared/errors';
+import { ApiError, errorMessage } from '../shared/errors';
 import { ErrorNotice } from '../shared/feedback';
 import { Button } from '../shared/ui/button';
 import { Badge } from '../shared/ui/badge';
@@ -160,11 +160,16 @@ function SessionApp({
     [],
   );
   const [lifetime] = useState(() => ({ current: new AbortController() }));
+  const mounted = useRef(false);
   // Reset the session lifetime before child query effects run, including StrictMode remounts.
   useLayoutEffect(() => {
+    mounted.current = true;
     lifetime.current = new AbortController();
-    return () => lifetime.current.abort();
-  }, [lifetime]);
+    return () => {
+      mounted.current = false;
+      lifetime.current.abort();
+    };
+  }, [lifetime, mounted]);
   const runtime = useMemo(() => {
     const gateway = createFriendlyGateway({
       baseUrl,
@@ -172,20 +177,40 @@ function SessionApp({
       sessionSignal: () => lifetime.current.signal,
       onUnauthorized: expire,
     });
+    // Revocation must remain usable when the account lifetime has been aborted.
+    const logoutGateway = createFriendlyGateway({
+      baseUrl,
+      authorization: session.authorization,
+    });
     return {
       gateway,
       mediaBaseUrl: baseUrl,
       imageProxyUrl: import.meta.env.VITE_IMAGE_PROXY_URL || undefined,
       userId: session.authorization.id,
-      logout: () => {
+      logout: async () => {
+        // Stop account operations immediately; the revoke call has its own lifetime.
         lifetime.current.abort();
+        try {
+          await logoutGateway.logout();
+        } catch (error) {
+          // The server has already rejected this token, so there is nothing left to revoke.
+          if (!(error instanceof ApiError && error.status === 401)) {
+            if (mounted.current) {
+              lifetime.current = new AbortController();
+              void client.invalidateQueries();
+            }
+            throw error;
+          }
+        }
+        // A different account may have signed in while this request was pending.
+        if (!mounted.current) return;
         void disablePush().catch(() => {});
         logout();
       },
       enablePush: () => enablePush(gateway, lifetime.current.signal),
       disablePush,
     };
-  }, [session, logout, expire, lifetime]);
+  }, [session, logout, expire, lifetime, mounted, client]);
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
     const refresh = (event: MessageEvent) => {
@@ -224,8 +249,10 @@ function SessionApp({
   );
 }
 
-function Shell({ logout }: { logout: () => void }) {
+function Shell({ logout }: { logout: () => Promise<void> }) {
   const { query, announcement, dismissAnnouncement, mutationError } = useActivity();
+  const [signingOut, setSigningOut] = useState(false);
+  const [logoutError, setLogoutError] = useState('');
   const navigate = useNavigate();
   const location = useLocation();
   const { pathname } = location;
@@ -307,7 +334,12 @@ function Shell({ logout }: { logout: () => void }) {
             <div className="topbar-actions">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" className="account-menu" aria-label="Account menu">
+                  <Button
+                    variant="ghost"
+                    className="account-menu"
+                    aria-label="Account menu"
+                    disabled={signingOut}
+                  >
                     <UserRound />
                     <span>Account</span>
                     <ChevronDown />
@@ -334,7 +366,21 @@ function Shell({ logout }: { logout: () => void }) {
                       My profile
                     </Link>
                   </DropdownMenuItem>
-                  <DropdownMenuItem className="min-h-11" onSelect={logout}>
+                  <DropdownMenuItem
+                    className="min-h-11"
+                    disabled={signingOut}
+                    onSelect={() => {
+                      setSigningOut(true);
+                      setLogoutError('');
+                      void logout()
+                        .catch((error) =>
+                          setLogoutError(
+                            `Could not sign out. Your session is still active. ${errorMessage(error)}`,
+                          ),
+                        )
+                        .finally(() => setSigningOut(false));
+                    }}
+                  >
                     <LogOut />
                     Sign out
                   </DropdownMenuItem>
@@ -347,6 +393,11 @@ function Shell({ logout }: { logout: () => void }) {
           </a>
         </aside>
         <main className="main-column" id="main-content" tabIndex={-1}>
+          {logoutError && (
+            <div className="global-notice">
+              <ErrorNotice message={logoutError} />
+            </div>
+          )}
           {mutationError && (
             <div className="global-notice">
               <ErrorNotice message={mutationError} />
