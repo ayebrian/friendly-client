@@ -69,6 +69,7 @@ describe('HTTP and protocol boundary', () => {
     const [url, options] = fetcher.mock.calls[0];
     expect(url).toBe('https://example.test/auth/logout');
     expect(options?.method).toBe('POST');
+    expect(options?.keepalive).toBe(true);
     expect((options?.headers as Headers).get('X-Token')).toBe(authorization.token);
     expect((options?.headers as Headers).get('X-User-Id')).toBe(String(authorization.id));
   });

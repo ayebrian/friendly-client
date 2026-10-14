@@ -66,7 +66,11 @@ describe('session and notification integration', () => {
     await user.click(screen.getByRole('button', { name: 'Account menu' }));
     await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
     await waitFor(() => expect(finishLogout).toBeDefined());
-    expect(sessionStorage.getItem('friendly.session.v1')).not.toBeNull();
+    expect(JSON.parse(sessionStorage.getItem('friendly.session.v1')!)).toEqual({
+      pendingLogout: auth,
+    });
+    expect(screen.getByRole('heading', { name: 'Signing out…' })).toBeTruthy();
+    expect(screen.queryByRole('navigation')).toBeNull();
     await act(async () => finishLogout!(new Response('{}')));
     await screen.findByRole('heading', { name: 'Sign in to Friendly' });
     expect(sessionStorage.getItem('friendly.session.v1')).toBeNull();
@@ -103,9 +107,57 @@ describe('session and notification integration', () => {
     await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
     await waitFor(() => expect(finishLogout).toBeDefined());
     expect(activitySignal!.aborted).toBe(true);
+    expect(screen.getByRole('heading', { name: 'Signing out…' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'New post' })).toBeNull();
     expect(sessionStorage.getItem('friendly.session.v1')).not.toBeNull();
     await act(async () => finishLogout!(new Response('{}')));
     await screen.findByRole('heading', { name: 'Sign in to Friendly' });
+  });
+
+  it('resumes a pending server sign out after a same-tab reload', async () => {
+    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    history.replaceState(null, '', '/activity');
+    let revokeCount = 0;
+    let finishFirst: ((response: Response) => void) | undefined;
+    const fetcher = vi.fn<typeof fetch>(async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/activity/list')
+        return new Response(JSON.stringify({ data: [], nextId: null }));
+      if (path === '/auth/logout') {
+        revokeCount++;
+        if (revokeCount === 1)
+          return new Promise<Response>((resolve) => {
+            finishFirst = resolve;
+          });
+        return new Response('{}');
+      }
+      throw new Error(`Unexpected endpoint: ${path}`);
+    });
+    vi.stubGlobal('fetch', fetcher);
+    const user = userEvent.setup();
+    const first = render(<App />);
+    await screen.findByRole('heading', { name: 'Notifications' });
+    await user.click(screen.getByRole('button', { name: 'Account menu' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
+    await waitFor(() => expect(finishFirst).toBeDefined());
+    expect(JSON.parse(sessionStorage.getItem('friendly.session.v1')!)).toEqual({
+      pendingLogout: auth,
+    });
+    first.unmount();
+
+    render(<App />);
+    expect(screen.getByRole('heading', { name: 'Signing out…' })).toBeTruthy();
+    expect(screen.queryByRole('navigation')).toBeNull();
+    await screen.findByRole('heading', { name: 'Sign in to Friendly' });
+    expect(revokeCount).toBe(2);
+    expect(sessionStorage.getItem('friendly.session.v1')).toBeNull();
+    for (const [, options] of fetcher.mock.calls.filter(([url]) =>
+      String(url).endsWith('/auth/logout'),
+    )) {
+      expect((options?.headers as Headers).get('X-Token')).toBe(auth.token);
+    }
+    await act(async () => finishFirst!(new Response('{}')));
+    expect(screen.getByRole('heading', { name: 'Sign in to Friendly' })).toBeTruthy();
   });
 
   it('does not let an old pending revoke clear a later account', async () => {
@@ -163,8 +215,9 @@ describe('session and notification integration', () => {
     await screen.findByRole('heading', { name: 'Notifications' });
     await user.click(screen.getByRole('button', { name: 'Account menu' }));
     await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
-    await screen.findByText(/Could not sign out. Your session is still active./);
-    expect(sessionStorage.getItem('friendly.session.v1')).not.toBeNull();
+    await screen.findByText(/Could not confirm sign-out. This account is still open in this tab./);
+    expect(JSON.parse(sessionStorage.getItem('friendly.session.v1')!)).toEqual(auth);
+    expect(screen.getByRole('heading', { name: 'Notifications' })).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Account menu' }));
     await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
     await screen.findByRole('heading', { name: 'Sign in to Friendly' });

@@ -63,13 +63,10 @@ import { PreferencesProvider } from '../shared/preferences';
 import { enablePush, disablePush } from '../infrastructure/push';
 
 const baseUrl = import.meta.env.VITE_API_BASE_URL || 'https://api.getfriend.ly';
-type Session = { authorization: Authorization };
+type Session = { authorization: Authorization; pendingLogout: boolean };
 
 export function App() {
-  const [session, setSession] = useState<Session | null>(() => {
-    const authorization = sessionStorageAdapter.read();
-    return authorization ? { authorization } : null;
-  });
+  const [session, setSession] = useState<Session | null>(() => sessionStorageAdapter.read());
   const [notice, setNotice] = useState('');
   const location = useLocation();
   const publicGateway = useMemo(() => createFriendlyGateway({ baseUrl }), []);
@@ -78,7 +75,7 @@ export function App() {
       login(value: Authorization) {
         sessionStorageAdapter.write(value);
         setNotice('');
-        setSession({ authorization: value });
+        setSession({ authorization: value, pendingLogout: false });
       },
       logout() {
         sessionStorageAdapter.write(null);
@@ -161,6 +158,9 @@ function SessionApp({
   );
   const [lifetime] = useState(() => ({ current: new AbortController() }));
   const mounted = useRef(false);
+  const logoutBusy = useRef(false);
+  const [signingOut, setSigningOut] = useState(session.pendingLogout);
+  const [logoutError, setLogoutError] = useState('');
   // Reset the session lifetime before child query effects run, including StrictMode remounts.
   useLayoutEffect(() => {
     mounted.current = true;
@@ -188,6 +188,12 @@ function SessionApp({
       imageProxyUrl: import.meta.env.VITE_IMAGE_PROXY_URL || undefined,
       userId: session.authorization.id,
       logout: async () => {
+        if (logoutBusy.current) return;
+        logoutBusy.current = true;
+        // The stored marker prevents a reload from reopening authenticated routes.
+        sessionStorageAdapter.beginLogout(session.authorization);
+        setLogoutError('');
+        setSigningOut(true);
         // Stop account operations immediately; the revoke call has its own lifetime.
         lifetime.current.abort();
         try {
@@ -196,21 +202,34 @@ function SessionApp({
           // The server has already rejected this token, so there is nothing left to revoke.
           if (!(error instanceof ApiError && error.status === 401)) {
             if (mounted.current) {
+              sessionStorageAdapter.restoreAfterFailedLogout(session.authorization);
               lifetime.current = new AbortController();
+              setLogoutError(
+                `Could not confirm sign-out. This account is still open in this tab. ${errorMessage(error)}`,
+              );
+              setSigningOut(false);
               void client.invalidateQueries();
             }
-            throw error;
+            logoutBusy.current = false;
+            return;
           }
         }
         // A different account may have signed in while this request was pending.
-        if (!mounted.current) return;
+        if (!mounted.current) {
+          logoutBusy.current = false;
+          return;
+        }
         void disablePush().catch(() => {});
         logout();
+        logoutBusy.current = false;
       },
       enablePush: () => enablePush(gateway, lifetime.current.signal),
       disablePush,
     };
   }, [session, logout, expire, lifetime, mounted, client]);
+  useEffect(() => {
+    if (session.pendingLogout) void runtime.logout();
+  }, [runtime, session.pendingLogout]);
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
     const refresh = (event: MessageEvent) => {
@@ -230,6 +249,7 @@ function SessionApp({
     },
     [client],
   );
+  if (signingOut) return <SigningOutPage />;
   return (
     <RuntimeContext value={runtime}>
       <QueryClientProvider client={client}>
@@ -242,17 +262,31 @@ function SessionApp({
             mobileOffset={{ bottom: 90, left: 12, right: 12 }}
             containerAriaLabel="App notifications"
           />
-          <Shell logout={runtime.logout} />
+          <Shell logout={runtime.logout} logoutError={logoutError} />
         </ActivityProvider>
       </QueryClientProvider>
     </RuntimeContext>
   );
 }
 
-function Shell({ logout }: { logout: () => Promise<void> }) {
+function SigningOutPage() {
+  return (
+    <main className="registration-layout">
+      <section className="registration-panel">
+        <div className="wordmark">
+          <BrandLogo />
+        </div>
+        <h1>Signing out…</h1>
+        <p role="status" className="muted">
+          Ending your session on Friendly.
+        </p>
+      </section>
+    </main>
+  );
+}
+
+function Shell({ logout, logoutError }: { logout: () => Promise<void>; logoutError: string }) {
   const { query, announcement, dismissAnnouncement, mutationError } = useActivity();
-  const [signingOut, setSigningOut] = useState(false);
-  const [logoutError, setLogoutError] = useState('');
   const navigate = useNavigate();
   const location = useLocation();
   const { pathname } = location;
@@ -334,12 +368,7 @@ function Shell({ logout }: { logout: () => Promise<void> }) {
             <div className="topbar-actions">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    className="account-menu"
-                    aria-label="Account menu"
-                    disabled={signingOut}
-                  >
+                  <Button variant="ghost" className="account-menu" aria-label="Account menu">
                     <UserRound />
                     <span>Account</span>
                     <ChevronDown />
@@ -366,21 +395,7 @@ function Shell({ logout }: { logout: () => Promise<void> }) {
                       My profile
                     </Link>
                   </DropdownMenuItem>
-                  <DropdownMenuItem
-                    className="min-h-11"
-                    disabled={signingOut}
-                    onSelect={() => {
-                      setSigningOut(true);
-                      setLogoutError('');
-                      void logout()
-                        .catch((error) =>
-                          setLogoutError(
-                            `Could not sign out. Your session is still active. ${errorMessage(error)}`,
-                          ),
-                        )
-                        .finally(() => setSigningOut(false));
-                    }}
-                  >
+                  <DropdownMenuItem className="min-h-11" onSelect={() => void logout()}>
                     <LogOut />
                     Sign out
                   </DropdownMenuItem>
