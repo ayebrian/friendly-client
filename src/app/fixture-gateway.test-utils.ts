@@ -141,6 +141,7 @@ export function createFixtureGateway() {
     async register() {
       throw new Error('Exit the fixture to create a real account.');
     },
+    async logout() {},
     async profile() {
       return clone(self);
     },

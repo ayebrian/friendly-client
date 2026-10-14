@@ -17,6 +17,7 @@ export interface FriendlyGateway {
   sendLoginCode(email: string, signal?: AbortSignal): Promise<void>;
   login(email: string, code: string, signal?: AbortSignal): Promise<Authorization>;
   register(input: ProfileInput, signal?: AbortSignal): Promise<Authorization>;
+  logout(signal?: AbortSignal): Promise<void>;
   profile(signal?: AbortSignal): Promise<Person>;
   person(id: number, accessHash: string, signal?: AbortSignal): Promise<PersonDetails>;
   editProfile(input: ProfileInput, signal?: AbortSignal): Promise<void>;

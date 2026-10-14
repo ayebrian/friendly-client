@@ -1,6 +1,6 @@
 import { BrandLogo } from '../shared/brand-logo';
 import './validation-policy';
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Link,
   Navigate,
@@ -26,7 +26,7 @@ import type { Authorization } from '../domain/models';
 import { createFriendlyGateway } from '../infrastructure/friendly-gateway';
 import { sessionStorageAdapter } from '../infrastructure/session-storage';
 import { RuntimeContext } from '../shared/runtime';
-import { ApiError } from '../shared/errors';
+import { ApiError, errorMessage } from '../shared/errors';
 import { ErrorNotice } from '../shared/feedback';
 import { Button } from '../shared/ui/button';
 import { Badge } from '../shared/ui/badge';
@@ -63,13 +63,10 @@ import { PreferencesProvider } from '../shared/preferences';
 import { enablePush, disablePush } from '../infrastructure/push';
 
 const baseUrl = import.meta.env.VITE_API_BASE_URL || 'https://api.getfriend.ly';
-type Session = { authorization: Authorization };
+type Session = { authorization: Authorization; pendingLogout: boolean };
 
 export function App() {
-  const [session, setSession] = useState<Session | null>(() => {
-    const authorization = sessionStorageAdapter.read();
-    return authorization ? { authorization } : null;
-  });
+  const [session, setSession] = useState<Session | null>(() => sessionStorageAdapter.read());
   const [notice, setNotice] = useState('');
   const location = useLocation();
   const publicGateway = useMemo(() => createFriendlyGateway({ baseUrl }), []);
@@ -78,7 +75,7 @@ export function App() {
       login(value: Authorization) {
         sessionStorageAdapter.write(value);
         setNotice('');
-        setSession({ authorization: value });
+        setSession({ authorization: value, pendingLogout: false });
       },
       logout() {
         sessionStorageAdapter.write(null);
@@ -160,11 +157,19 @@ function SessionApp({
     [],
   );
   const [lifetime] = useState(() => ({ current: new AbortController() }));
+  const mounted = useRef(false);
+  const logoutBusy = useRef(false);
+  const [signingOut, setSigningOut] = useState(session.pendingLogout);
+  const [logoutError, setLogoutError] = useState('');
   // Reset the session lifetime before child query effects run, including StrictMode remounts.
   useLayoutEffect(() => {
+    mounted.current = true;
     lifetime.current = new AbortController();
-    return () => lifetime.current.abort();
-  }, [lifetime]);
+    return () => {
+      mounted.current = false;
+      lifetime.current.abort();
+    };
+  }, [lifetime, mounted]);
   const runtime = useMemo(() => {
     const gateway = createFriendlyGateway({
       baseUrl,
@@ -172,20 +177,59 @@ function SessionApp({
       sessionSignal: () => lifetime.current.signal,
       onUnauthorized: expire,
     });
+    // Revocation must remain usable when the account lifetime has been aborted.
+    const logoutGateway = createFriendlyGateway({
+      baseUrl,
+      authorization: session.authorization,
+    });
     return {
       gateway,
       mediaBaseUrl: baseUrl,
       imageProxyUrl: import.meta.env.VITE_IMAGE_PROXY_URL || undefined,
       userId: session.authorization.id,
-      logout: () => {
+      logout: async () => {
+        if (logoutBusy.current) return;
+        logoutBusy.current = true;
+        // The stored marker prevents a reload from reopening authenticated routes.
+        sessionStorageAdapter.beginLogout(session.authorization);
+        setLogoutError('');
+        setSigningOut(true);
+        // Stop account operations immediately; the revoke call has its own lifetime.
         lifetime.current.abort();
+        try {
+          await logoutGateway.logout();
+        } catch (error) {
+          // The server has already rejected this token, so there is nothing left to revoke.
+          if (!(error instanceof ApiError && error.status === 401)) {
+            if (mounted.current) {
+              sessionStorageAdapter.restoreAfterFailedLogout(session.authorization);
+              lifetime.current = new AbortController();
+              setLogoutError(
+                `Could not confirm sign-out. This account is still open in this tab. ${errorMessage(error)}`,
+              );
+              setSigningOut(false);
+              void client.invalidateQueries();
+            }
+            logoutBusy.current = false;
+            return;
+          }
+        }
+        // A different account may have signed in while this request was pending.
+        if (!mounted.current) {
+          logoutBusy.current = false;
+          return;
+        }
         void disablePush().catch(() => {});
         logout();
+        logoutBusy.current = false;
       },
       enablePush: () => enablePush(gateway, lifetime.current.signal),
       disablePush,
     };
-  }, [session, logout, expire, lifetime]);
+  }, [session, logout, expire, lifetime, mounted, client]);
+  useEffect(() => {
+    if (session.pendingLogout) void runtime.logout();
+  }, [runtime, session.pendingLogout]);
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
     const refresh = (event: MessageEvent) => {
@@ -205,6 +249,7 @@ function SessionApp({
     },
     [client],
   );
+  if (signingOut) return <SigningOutPage />;
   return (
     <RuntimeContext value={runtime}>
       <QueryClientProvider client={client}>
@@ -217,14 +262,30 @@ function SessionApp({
             mobileOffset={{ bottom: 90, left: 12, right: 12 }}
             containerAriaLabel="App notifications"
           />
-          <Shell logout={runtime.logout} />
+          <Shell logout={runtime.logout} logoutError={logoutError} />
         </ActivityProvider>
       </QueryClientProvider>
     </RuntimeContext>
   );
 }
 
-function Shell({ logout }: { logout: () => void }) {
+function SigningOutPage() {
+  return (
+    <main className="registration-layout">
+      <section className="registration-panel">
+        <div className="wordmark">
+          <BrandLogo />
+        </div>
+        <h1>Signing out…</h1>
+        <p role="status" className="muted">
+          Ending your session on Friendly.
+        </p>
+      </section>
+    </main>
+  );
+}
+
+function Shell({ logout, logoutError }: { logout: () => Promise<void>; logoutError: string }) {
   const { query, announcement, dismissAnnouncement, mutationError } = useActivity();
   const navigate = useNavigate();
   const location = useLocation();
@@ -334,7 +395,7 @@ function Shell({ logout }: { logout: () => void }) {
                       My profile
                     </Link>
                   </DropdownMenuItem>
-                  <DropdownMenuItem className="min-h-11" onSelect={logout}>
+                  <DropdownMenuItem className="min-h-11" onSelect={() => void logout()}>
                     <LogOut />
                     Sign out
                   </DropdownMenuItem>
@@ -347,6 +408,11 @@ function Shell({ logout }: { logout: () => void }) {
           </a>
         </aside>
         <main className="main-column" id="main-content" tabIndex={-1}>
+          {logoutError && (
+            <div className="global-notice">
+              <ErrorNotice message={logoutError} />
+            </div>
+          )}
           {mutationError && (
             <div className="global-notice">
               <ErrorNotice message={mutationError} />

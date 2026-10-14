@@ -54,6 +54,7 @@ function live({
   const fetcher = vi.fn<typeof fetch>(async (url, options = {}) => {
     const path = new URL(String(url)).pathname;
     if (path === '/activity/list') return json({ data: [], nextId: null });
+    if (path === '/auth/logout') return json({});
     if (path === '/feed/queue') return json({ entries: [] });
     if (path === '/community/list')
       return json({
@@ -367,7 +368,7 @@ describe('media composing and publishing', () => {
           userId: 1,
           enablePush: async () => {},
           disablePush: async () => {},
-          logout: () => {},
+          logout: async () => {},
         }}
       >
         <Markdown
@@ -404,7 +405,7 @@ describe('media composing and publishing', () => {
           userId: 1,
           enablePush: async () => {},
           disablePush: async () => {},
-          logout: () => {},
+          logout: async () => {},
         }}
       >
         <Markdown

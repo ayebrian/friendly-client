@@ -98,6 +98,9 @@ const part = encodeURIComponent;
 export function createFriendlyGateway(options: HttpOptions): FriendlyGateway {
   const request = createHttp(options);
   return {
+    async logout(signal) {
+      await request('/auth/logout', { method: 'POST', keepalive: true, signal });
+    },
     async register(input, signal) {
       return parse(
         authorizationSchema,

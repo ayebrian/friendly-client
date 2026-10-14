@@ -8,7 +8,7 @@ export interface Runtime {
   userId: number;
   enablePush: () => Promise<void>;
   disablePush: () => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 export const RuntimeContext = createContext<Runtime | null>(null);

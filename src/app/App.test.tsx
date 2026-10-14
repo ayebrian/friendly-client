@@ -45,6 +45,209 @@ const event = {
 const auth = { id: 1, token: 'test-token', accessHash: 'test-hash' };
 
 describe('session and notification integration', () => {
+  it('revokes the server token before clearing the local session on sign out', async () => {
+    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    history.replaceState(null, '', '/activity');
+    let finishLogout: ((response: Response) => void) | undefined;
+    const fetcher = vi.fn<typeof fetch>(async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/activity/list')
+        return new Response(JSON.stringify({ data: [], nextId: null }));
+      if (path === '/auth/logout')
+        return new Promise<Response>((resolve) => {
+          finishLogout = resolve;
+        });
+      throw new Error(`Unexpected endpoint: ${path}`);
+    });
+    vi.stubGlobal('fetch', fetcher);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Notifications' });
+    await user.click(screen.getByRole('button', { name: 'Account menu' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
+    await waitFor(() => expect(finishLogout).toBeDefined());
+    expect(JSON.parse(sessionStorage.getItem('friendly.session.v1')!)).toEqual({
+      pendingLogout: auth,
+    });
+    expect(screen.getByRole('heading', { name: 'Signing out…' })).toBeTruthy();
+    expect(screen.queryByRole('navigation')).toBeNull();
+    await act(async () => finishLogout!(new Response('{}')));
+    await screen.findByRole('heading', { name: 'Sign in to Friendly' });
+    expect(sessionStorage.getItem('friendly.session.v1')).toBeNull();
+    const request = fetcher.mock.calls.find(([url]) => String(url).endsWith('/auth/logout'))!;
+    expect(request[1]?.method).toBe('POST');
+    expect((request[1]?.headers as Headers).get('X-Token')).toBe(auth.token);
+    expect((request[1]?.headers as Headers).get('X-User-Id')).toBe(String(auth.id));
+  });
+
+  it('aborts account requests as soon as sign out starts, while revocation is pending', async () => {
+    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    history.replaceState(null, '', '/activity');
+    let activitySignal: AbortSignal | undefined;
+    let finishLogout: ((response: Response) => void) | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>(async (url, options) => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/activity/list') {
+          activitySignal = options?.signal as AbortSignal;
+          return new Promise<Response>(() => {});
+        }
+        if (path === '/auth/logout')
+          return new Promise<Response>((resolve) => {
+            finishLogout = resolve;
+          });
+        throw new Error(`Unexpected endpoint: ${path}`);
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(activitySignal).toBeDefined());
+    await user.click(screen.getByRole('button', { name: 'Account menu' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
+    await waitFor(() => expect(finishLogout).toBeDefined());
+    expect(activitySignal!.aborted).toBe(true);
+    expect(screen.getByRole('heading', { name: 'Signing out…' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'New post' })).toBeNull();
+    expect(sessionStorage.getItem('friendly.session.v1')).not.toBeNull();
+    await act(async () => finishLogout!(new Response('{}')));
+    await screen.findByRole('heading', { name: 'Sign in to Friendly' });
+  });
+
+  it('resumes a pending server sign out after a same-tab reload', async () => {
+    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    history.replaceState(null, '', '/activity');
+    let revokeCount = 0;
+    let finishFirst: ((response: Response) => void) | undefined;
+    const fetcher = vi.fn<typeof fetch>(async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/activity/list')
+        return new Response(JSON.stringify({ data: [], nextId: null }));
+      if (path === '/auth/logout') {
+        revokeCount++;
+        if (revokeCount === 1)
+          return new Promise<Response>((resolve) => {
+            finishFirst = resolve;
+          });
+        return new Response('{}');
+      }
+      throw new Error(`Unexpected endpoint: ${path}`);
+    });
+    vi.stubGlobal('fetch', fetcher);
+    const user = userEvent.setup();
+    const first = render(<App />);
+    await screen.findByRole('heading', { name: 'Notifications' });
+    await user.click(screen.getByRole('button', { name: 'Account menu' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
+    await waitFor(() => expect(finishFirst).toBeDefined());
+    expect(JSON.parse(sessionStorage.getItem('friendly.session.v1')!)).toEqual({
+      pendingLogout: auth,
+    });
+    first.unmount();
+
+    render(<App />);
+    expect(screen.getByRole('heading', { name: 'Signing out…' })).toBeTruthy();
+    expect(screen.queryByRole('navigation')).toBeNull();
+    await screen.findByRole('heading', { name: 'Sign in to Friendly' });
+    expect(revokeCount).toBe(2);
+    expect(sessionStorage.getItem('friendly.session.v1')).toBeNull();
+    for (const [, options] of fetcher.mock.calls.filter(([url]) =>
+      String(url).endsWith('/auth/logout'),
+    )) {
+      expect((options?.headers as Headers).get('X-Token')).toBe(auth.token);
+    }
+    await act(async () => finishFirst!(new Response('{}')));
+    expect(screen.getByRole('heading', { name: 'Sign in to Friendly' })).toBeTruthy();
+  });
+
+  it('does not let an old pending revoke clear a later account', async () => {
+    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    history.replaceState(null, '', '/activity');
+    let finishLogout: ((response: Response) => void) | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>(async (url) => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/activity/list')
+          return new Response(JSON.stringify({ data: [], nextId: null }));
+        if (path === '/auth/logout')
+          return new Promise<Response>((resolve) => {
+            finishLogout = resolve;
+          });
+        throw new Error(`Unexpected endpoint: ${path}`);
+      }),
+    );
+    const user = userEvent.setup();
+    const first = render(<App />);
+    await screen.findByRole('heading', { name: 'Notifications' });
+    await user.click(screen.getByRole('button', { name: 'Account menu' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
+    await waitFor(() => expect(finishLogout).toBeDefined());
+    first.unmount();
+    const nextAuth = { id: 2, token: 'next-token', accessHash: 'next-hash' };
+    sessionStorage.setItem('friendly.session.v1', JSON.stringify(nextAuth));
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Notifications' });
+    await act(async () => finishLogout!(new Response('{}')));
+    expect(JSON.parse(sessionStorage.getItem('friendly.session.v1')!)).toEqual(nextAuth);
+    expect(screen.getByRole('heading', { name: 'Notifications' })).toBeTruthy();
+  });
+
+  it('keeps the session available after a failed revoke, then retries sign out', async () => {
+    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    history.replaceState(null, '', '/activity');
+    let attempts = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>(async (url) => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/activity/list')
+          return new Response(JSON.stringify({ data: [], nextId: null }));
+        if (path === '/auth/logout') {
+          if (++attempts === 1) throw new TypeError('Network unavailable');
+          return new Response('{}');
+        }
+        throw new Error(`Unexpected endpoint: ${path}`);
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Notifications' });
+    await user.click(screen.getByRole('button', { name: 'Account menu' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
+    await screen.findByText(/Could not confirm sign-out. This account is still open in this tab./);
+    expect(JSON.parse(sessionStorage.getItem('friendly.session.v1')!)).toEqual(auth);
+    expect(screen.getByRole('heading', { name: 'Notifications' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Account menu' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
+    await screen.findByRole('heading', { name: 'Sign in to Friendly' });
+    expect(attempts).toBe(2);
+    expect(sessionStorage.getItem('friendly.session.v1')).toBeNull();
+  });
+
+  it('clears the local session when the revoke endpoint reports an already invalid token', async () => {
+    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    history.replaceState(null, '', '/activity');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>(async (url) => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/activity/list')
+          return new Response(JSON.stringify({ data: [], nextId: null }));
+        if (path === '/auth/logout') return new Response(null, { status: 401 });
+        throw new Error(`Unexpected endpoint: ${path}`);
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Notifications' });
+    await user.click(screen.getByRole('button', { name: 'Account menu' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
+    await screen.findByRole('heading', { name: 'Sign in to Friendly' });
+    expect(sessionStorage.getItem('friendly.session.v1')).toBeNull();
+    expect(screen.queryByText('Your session has ended. Please sign in again.')).toBeNull();
+  });
+
   it.each(['code', 'login'] as const)(
     'cancels a pending %s request and ignores its late response after leaving sign-in',
     async (stage) => {

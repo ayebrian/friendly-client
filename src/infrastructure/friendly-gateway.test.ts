@@ -58,6 +58,21 @@ describe('HTTP and protocol boundary', () => {
       createFriendlyGateway({ baseUrl: '', authorization, fetcher }).readActivity(2),
     ).resolves.toBeUndefined();
   });
+  it('revokes the authenticated token with the backend logout route', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(json({}));
+    await createFriendlyGateway({
+      baseUrl: 'https://example.test',
+      authorization,
+      fetcher,
+    }).logout();
+    expect(fetcher).toHaveBeenCalledOnce();
+    const [url, options] = fetcher.mock.calls[0];
+    expect(url).toBe('https://example.test/auth/logout');
+    expect(options?.method).toBe('POST');
+    expect(options?.keepalive).toBe(true);
+    expect((options?.headers as Headers).get('X-Token')).toBe(authorization.token);
+    expect((options?.headers as Headers).get('X-User-Id')).toBe(String(authorization.id));
+  });
   it('keeps unknown event types visible without requiring a reply payload', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       json({
