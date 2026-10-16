@@ -10,7 +10,8 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # Self-hosted runner mc-friendly-client on the owner's server mc.
+    runs-on: [self-hosted, linux, mc]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.1
