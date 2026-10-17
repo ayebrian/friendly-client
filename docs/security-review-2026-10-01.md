@@ -42,7 +42,7 @@ TruffleHog запускался с `--no-verification --no-update`: кандид
 
 Правило: `REACT-HEADERS-001`.
 
-**Место:** оболочка [index.html](/home/hsmr/friendly-client/index.html:3), настройки
+**Место:** оболочка [index.html](../index.html:3), настройки
 HTTP-заголовков статического хостинга. Файла `public/_headers` в репозитории нет.
 
 **Доказательство:** ответ `https://friendly.hausmer.com/` не содержит ни
@@ -63,8 +63,8 @@ HTTP-заголовков статического хостинга. Файла 
 
 Правило: `REACT-CSP-001`. Это отсутствие дополнительного слоя защиты, а не найденная XSS.
 
-**Место:** [Markdown](/home/hsmr/friendly-client/src/shared/markdown.tsx:60),
-[ранняя инициализация темы](/home/hsmr/friendly-client/index.html:22), заголовки сайта.
+**Место:** [Markdown](../src/shared/markdown.tsx:60),
+[ранняя инициализация темы](../index.html:22), заголовки сайта.
 
 **Доказательство:** CSP отсутствует в HTTP-ответе и HTML. Приложение обрабатывает
 пользовательский HTML через `rehype-raw` и `rehype-sanitize`.
@@ -86,8 +86,8 @@ blob-превью и разрешённые медиа. Не добавлять 
 Правило: `REACT-SUPPLY-001`. Уязвимости пакета имеют severity High и Low;
 доступный путь эксплуатации в этом браузерном клиенте не найден.
 
-**Место:** [package-lock.json](/home/hsmr/friendly-client/package-lock.json:1593),
-[использование Firebase](/home/hsmr/friendly-client/src/infrastructure/push.ts:16).
+**Место:** [package-lock.json](../package-lock.json:1593),
+[использование Firebase](../src/infrastructure/push.ts:16).
 
 **Доказательство:** установлен `@grpc/grpc-js@1.9.16` через
 `firebase@12.19.0 → @firebase/firestore@4.17.2`. Есть два advisories:
@@ -114,7 +114,7 @@ blob-превью и разрешённые медиа. Не добавлять 
 
 Правило: `REACT-URL-001`; риск приватности, не выполнение JavaScript.
 
-**Место:** [рендер медиа](/home/hsmr/friendly-client/src/shared/markdown.tsx:68).
+**Место:** [рендер медиа](../src/shared/markdown.tsx:68).
 
 **Доказательство:** пользовательские `img` и `video` принимают внешние HTTP(S) URL.
 В браузерной проверке пост инициировал запросы к тестовому внешнему origin без
@@ -136,7 +136,7 @@ blob-превью и разрешённые медиа. Не добавлять 
 
 ### 5. P2 — поле подтверждения email обрезает отформатированный код
 
-**Место:** [SettingsPage](/home/hsmr/friendly-client/src/features/settings/SettingsPage.tsx:140).
+**Место:** [SettingsPage](../src/features/settings/SettingsPage.tsx:140).
 
 **Доказательство:** реальная вставка `1234-5678` через Ctrl+V оставляет в поле
 `1234-567`: браузер сначала применяет `maxLength={8}`. Затем схема `^\d{8}$`
@@ -151,9 +151,9 @@ blob-превью и разрешённые медиа. Не добавлять 
 
 ### 6. P2 — выход из демо не освобождает загруженные blob URL
 
-**Место:** [создание runtime](/home/hsmr/friendly-client/src/app/App.tsx:172),
-[cleanup сессии](/home/hsmr/friendly-client/src/app/App.tsx:210),
-[dispose демо](/home/hsmr/friendly-client/src/infrastructure/demo-gateway.ts:283).
+**Место:** [создание runtime](../src/app/App.tsx:172),
+[cleanup сессии](../src/app/App.tsx:210),
+[dispose демо](../src/infrastructure/demo-gateway.ts:283).
 
 **Доказательство:** `demo.dispose` передаётся в runtime, но никогда не вызывается.
 После загрузки и публикации PNG в демо, затем `Exit demo`, `fetch` известного blob URL
