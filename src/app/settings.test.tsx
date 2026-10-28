@@ -7,7 +7,7 @@ import { App } from './App';
 
 afterEach(() => {
   cleanup();
-  sessionStorage.clear();
+  localStorage.clear();
   history.replaceState(null, '', '/');
   vi.unstubAllGlobals();
 });
@@ -15,7 +15,7 @@ afterEach(() => {
 it.each(['1234-5678', '1234 5678'])(
   'confirms a pasted code %s and preserves it for retry after an error',
   async (clipboard) => {
-    sessionStorage.setItem(
+    localStorage.setItem(
       'friendly.session.v1',
       JSON.stringify({ id: 1, token: 'test-token', accessHash: 'test-hash' }),
     );

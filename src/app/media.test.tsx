@@ -34,7 +34,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
-  sessionStorage.clear();
+  localStorage.clear();
   history.replaceState(null, '', '/');
   vi.unstubAllGlobals();
 });
@@ -46,7 +46,7 @@ function live({
   upload?: (file: File, options: RequestInit, index: number) => Response | Promise<Response>;
   publish?: (text: string, index: number) => Response | Promise<Response>;
 } = {}) {
-  sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+  localStorage.setItem('friendly.session.v1', JSON.stringify(auth));
   history.replaceState(null, '', '/community');
   let uploadCount = 0;
   let publishCount = 0;
@@ -300,7 +300,7 @@ describe('media composing and publishing', () => {
     await user.upload(await screen.findByLabelText('Choose media files'), image());
     await user.click(screen.getByRole('button', { name: 'Post' }));
     await screen.findByText('Your session has ended. Please sign in again.');
-    expect(sessionStorage.getItem('friendly.session.v1')).toBeNull();
+    expect(localStorage.getItem('friendly.session.v1')).toBeNull();
     expect(publications(fetcher)).toHaveLength(0);
   });
 

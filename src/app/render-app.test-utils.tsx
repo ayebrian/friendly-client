@@ -27,7 +27,7 @@ export function renderApp(element: ReactNode) {
 
 export function renderFixtureApp(element: ReactNode) {
   const fixture = createFixtureGateway();
-  sessionStorage.setItem(
+  localStorage.setItem(
     'friendly.session.v1',
     JSON.stringify({ id: 1, token: 'fixture-token', accessHash: 'fixture-hash' }),
   );

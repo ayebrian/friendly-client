@@ -21,7 +21,7 @@ beforeAll(() => {
 
 afterEach(() => {
   cleanup();
-  sessionStorage.clear();
+  localStorage.clear();
   history.replaceState(null, '', '/');
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -147,7 +147,7 @@ describe('feed, drafts and form recovery', () => {
   });
 
   it('preserves an inline publication after a failed request and refreshes the feed on retry', async () => {
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v1', JSON.stringify(auth));
     history.replaceState(null, '', '/community');
     let text = '';
     let fail = true;
@@ -190,7 +190,7 @@ describe('feed, drafts and form recovery', () => {
   });
 
   it('cancels an inline publication when leaving the feed', async () => {
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v1', JSON.stringify(auth));
     history.replaceState(null, '', '/community');
     let publicationSignal: AbortSignal | undefined;
     vi.stubGlobal(
@@ -301,7 +301,7 @@ describe('feed, drafts and form recovery', () => {
 
 describe('pending thread operations', () => {
   it('keeps reply targets disabled during submission and restores the draft after failure', async () => {
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v1', JSON.stringify(auth));
     history.replaceState(null, '', '/post/10/hash');
     let finish: ((response: Response) => void) | undefined;
     vi.stubGlobal(

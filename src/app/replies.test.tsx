@@ -20,7 +20,7 @@ const last = post(13, 'Yes, the cafe!');
 
 afterEach(() => {
   cleanup();
-  sessionStorage.clear();
+  localStorage.clear();
   history.replaceState(null, '', '/');
   vi.unstubAllGlobals();
 });
@@ -30,7 +30,7 @@ function openThread({
   replies = [] as object[],
   nextId = null as string | null,
 } = {}) {
-  sessionStorage.setItem(
+  localStorage.setItem(
     'friendly.session.v1',
     JSON.stringify({ id: 1, token: 'test-token', accessHash: 'test-hash' }),
   );

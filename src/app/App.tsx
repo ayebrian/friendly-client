@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import type { Authorization } from '../domain/models';
 import { createFriendlyGateway } from '../infrastructure/friendly-gateway';
-import { sessionStorageAdapter } from '../infrastructure/session-storage';
+import { sameAuthorization, sessionStore } from '../infrastructure/session-storage';
 import { RuntimeContext } from '../shared/runtime';
 import { ApiError, errorMessage } from '../shared/errors';
 import { ErrorNotice } from '../shared/feedback';
@@ -66,28 +66,44 @@ const baseUrl = import.meta.env.VITE_API_BASE_URL || 'https://api.getfriend.ly';
 type Session = { authorization: Authorization; pendingLogout: boolean };
 
 export function App() {
-  const [session, setSession] = useState<Session | null>(() => sessionStorageAdapter.read());
+  const [session, setSession] = useState<Session | null>(() => sessionStore.read());
   const [notice, setNotice] = useState('');
   const location = useLocation();
   const publicGateway = useMemo(() => createFriendlyGateway({ baseUrl }), []);
   const actions = useMemo(
     () => ({
       login(value: Authorization) {
-        sessionStorageAdapter.write(value);
+        sessionStore.write(value);
         setNotice('');
         setSession({ authorization: value, pendingLogout: false });
       },
-      logout() {
-        sessionStorageAdapter.write(null);
-        setSession(null);
+      // Both only end `value`: another tab may already have signed in to a different account.
+      logout(value: Authorization) {
+        sessionStore.clear(value);
+        setSession((current) => endSession(current, value));
         setNotice('');
       },
-      expire() {
-        sessionStorageAdapter.write(null);
-        setSession(null);
+      expire(value: Authorization) {
+        sessionStore.clear(value);
+        setSession((current) => endSession(current, value));
         setNotice('Your session has ended. Please sign in again.');
       },
     }),
+    [],
+  );
+  // The account is shared by all tabs: follow sign-in and sign-out made in another tab.
+  useEffect(
+    () =>
+      sessionStore.subscribe((next) => {
+        setNotice('');
+        setSession((current) => {
+          // Another tab is revoking or has revoked the stored account.
+          if (!next || next.pendingLogout) return null;
+          if (current && sameAuthorization(current.authorization, next.authorization))
+            return current;
+          return { authorization: next.authorization, pendingLogout: false };
+        });
+      }),
     [],
   );
   return (
@@ -95,7 +111,13 @@ export function App() {
       <TooltipProvider delayDuration={300}>
         <>
           {session ? (
-            <SessionApp session={session} logout={actions.logout} expire={actions.expire} />
+            <SessionApp
+              // A different account always gets a fresh tree and QueryClient.
+              key={`${session.authorization.id}:${session.authorization.token}`}
+              session={session}
+              logout={actions.logout}
+              expire={actions.expire}
+            />
           ) : (
             <Routes>
               <Route
@@ -129,14 +151,18 @@ export function App() {
   );
 }
 
+function endSession(current: Session | null, value: Authorization) {
+  return current && sameAuthorization(current.authorization, value) ? null : current;
+}
+
 function SessionApp({
   session,
   logout,
   expire,
 }: {
   session: Session;
-  logout: () => void;
-  expire: () => void;
+  logout: (value: Authorization) => void;
+  expire: (value: Authorization) => void;
 }) {
   const client = useMemo(
     () =>
@@ -175,7 +201,7 @@ function SessionApp({
       baseUrl,
       authorization: session.authorization,
       sessionSignal: () => lifetime.current.signal,
-      onUnauthorized: expire,
+      onUnauthorized: () => expire(session.authorization),
     });
     // Revocation must remain usable when the account lifetime has been aborted.
     const logoutGateway = createFriendlyGateway({
@@ -191,7 +217,7 @@ function SessionApp({
         if (logoutBusy.current) return;
         logoutBusy.current = true;
         // The stored marker prevents a reload from reopening authenticated routes.
-        sessionStorageAdapter.beginLogout(session.authorization);
+        sessionStore.beginLogout(session.authorization);
         setLogoutError('');
         setSigningOut(true);
         // Stop account operations immediately; the revoke call has its own lifetime.
@@ -202,7 +228,7 @@ function SessionApp({
           // The server has already rejected this token, so there is nothing left to revoke.
           if (!(error instanceof ApiError && error.status === 401)) {
             if (mounted.current) {
-              sessionStorageAdapter.restoreAfterFailedLogout(session.authorization);
+              sessionStore.restoreAfterFailedLogout(session.authorization);
               lifetime.current = new AbortController();
               setLogoutError(
                 `Could not confirm sign-out. This account is still open in this tab. ${errorMessage(error)}`,
@@ -220,7 +246,7 @@ function SessionApp({
           return;
         }
         void disablePush().catch(() => {});
-        logout();
+        logout(session.authorization);
         logoutBusy.current = false;
       },
       enablePush: () => enablePush(gateway, lifetime.current.signal),

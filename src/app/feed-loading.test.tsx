@@ -23,13 +23,13 @@ function deferred<T>() {
 
 afterEach(() => {
   cleanup();
-  sessionStorage.clear();
+  localStorage.clear();
   history.replaceState(null, '', '/');
   vi.unstubAllGlobals();
 });
 
 function openFeed(list: (path: string) => Response | Promise<Response>) {
-  sessionStorage.setItem(
+  localStorage.setItem(
     'friendly.session.v1',
     JSON.stringify({ id: 1, token: 'test-token', accessHash: 'test-hash' }),
   );
