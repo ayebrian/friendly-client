@@ -24,6 +24,29 @@ export async function loadActivity(
   return { items: [...events.values()], complete: false };
 }
 
+/** Short title and description of an event for in-app announcements. */
+export function activitySummary(event: ActivityEvent): { title: string; description: string } {
+  const excerpt = (text: string) => text.slice(0, 90);
+  switch (event.kind) {
+    case 'reply':
+      return {
+        title: 'New reply',
+        description: `${event.post.owner.nickname || 'Member'}: ${excerpt(event.post.text)}`,
+      };
+    case 'indirectReplies':
+      return {
+        title: 'New replies in a thread you follow',
+        description: excerpt(event.post.text),
+      };
+    case 'friendRequest':
+      return event.isMutual
+        ? { title: 'New friend', description: `${event.from.nickname} accepted your request` }
+        : { title: 'Friend request', description: `${event.from.nickname} wants to be friends` };
+    case 'unknown':
+      return { title: 'New activity', description: 'Open notifications' };
+  }
+}
+
 export function unreadCount(snapshot?: ActivitySnapshot) {
   return snapshot?.items.filter((item) => !item.isRead).length ?? 0;
 }

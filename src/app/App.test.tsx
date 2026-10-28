@@ -5,6 +5,7 @@ import { renderFixtureApp, renderApp as render } from './render-app.test-utils';
 import userEvent from '@testing-library/user-event';
 import { App } from './App';
 import { StrictMode } from 'react';
+import activity from '../infrastructure/fixtures/activity-list.json?raw';
 
 // jsdom has no pointer capture; Sonner uses the browser API for swipe dismissal.
 beforeAll(() => {
@@ -31,7 +32,7 @@ afterEach(() => {
 const owner = { id: 2, nickname: 'Тестовый автор', description: '', interests: [] };
 const event = {
   id: 1,
-  type: 'reply',
+  type: 'new_reply',
   instant: '2026-09-30T12:00:00Z',
   isRead: false,
   post: {
@@ -293,6 +294,34 @@ describe('session and notification integration', () => {
     },
   );
 
+  it('renders replies, followed-thread replies and friend requests from the backend', async () => {
+    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    history.replaceState(null, '', '/activity');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>(async (url) => {
+        if (new URL(String(url)).pathname === '/activity/list') return new Response(activity);
+        throw new Error('unexpected endpoint');
+      }),
+    );
+    render(<App />);
+    await screen.findByText('Who is up for a hike on Saturday?');
+    const text = [...document.querySelectorAll('.activity-row')].map((row) => row.textContent);
+    expect(text).toHaveLength(4);
+    expect(text[0]).toContain('Annasent you a friend request');
+    expect(text[1]).toContain('Borisaccepted your friend request');
+    expect(text[1]).toContain('You are friends now.');
+    expect(text[2]).toContain('New repliesin a thread byVera');
+    expect(text[2]).toContain('Who is up for a hike on Saturday?');
+    expect(text[3]).toContain('Verareplied to your post');
+    expect(screen.queryByText(/not supported by the app/)).toBeNull();
+    const href = (name: string) => screen.getByRole('link', { name }).getAttribute('href');
+    expect(href('Respond')).toBe('/people/31/anna-hash');
+    expect(href('Open profile')).toBe('/people/32/boris-hash');
+    expect(href('Open replies')).toBe('/post/122/branch-hash');
+    expect(href('Open reply')).toBe('/post/110/reply-hash');
+    await waitFor(() => expect(document.title).toBe('(3) Friendly'));
+  });
   it('polls activity on a different page without enabling push', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     let events = [event];

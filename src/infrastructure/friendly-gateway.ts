@@ -41,6 +41,9 @@ const activitySchema = z.object({
   isRead: z.boolean(),
   type: z.string(),
   post: z.unknown().optional(),
+  commonDenominator: z.unknown().optional(),
+  from: z.unknown().optional(),
+  isMutual: z.unknown().optional(),
 });
 const activityPageSchema = z.object({
   data: z.array(activitySchema),
@@ -54,14 +57,44 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   return result.data;
 }
 
+/**
+ * Activity types of the Friendly backend (ActivityDetailsSerializable): `new_reply`,
+ * `indirect_replies` and `new_request`. `reply` is the name `new_reply` had before 2026-10-23.
+ * An entry whose type or payload is not understood stays visible as `unknown` instead of
+ * failing the whole history.
+ */
 function mapActivity(value: z.infer<typeof activitySchema>): ActivityEvent {
-  return {
-    id: value.id,
-    instant: value.instant,
-    isRead: value.isRead,
-    kind: value.type === 'reply' ? 'reply' : 'unknown',
-    post: value.type === 'reply' ? mapPost(value.post) : undefined,
-  };
+  const base = { id: value.id, instant: value.instant, isRead: value.isRead };
+  switch (value.type) {
+    case 'reply':
+    case 'new_reply': {
+      const post = tryMapPost(value.post);
+      if (post) return { ...base, kind: 'reply', post };
+      break;
+    }
+    case 'indirect_replies': {
+      const post = tryMapPost(value.post);
+      const commonDenominator = tryMapPost(value.commonDenominator);
+      if (post && commonDenominator)
+        return { ...base, kind: 'indirectReplies', post, commonDenominator };
+      break;
+    }
+    case 'new_request': {
+      const from = personSchema.safeParse(value.from);
+      if (from.success && typeof value.isMutual === 'boolean')
+        return { ...base, kind: 'friendRequest', from: from.data, isMutual: value.isMutual };
+      break;
+    }
+  }
+  return { ...base, kind: 'unknown' };
+}
+
+function tryMapPost(value: unknown): Post | undefined {
+  try {
+    return mapPost(value);
+  } catch {
+    return undefined;
+  }
 }
 
 function mapPost(value: unknown): Post {

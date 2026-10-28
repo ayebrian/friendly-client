@@ -1,0 +1,114 @@
+{
+  "data": [
+    {
+      "type": "new_request",
+      "id": 7,
+      "instant": "2026-10-25T18:04:11.512Z",
+      "isRead": false,
+      "from": {
+        "id": 31,
+        "accessHash": "anna-hash",
+        "nickname": "Anna",
+        "email": null,
+        "description": "Climbing and coffee",
+        "interests": ["climbing"],
+        "avatar": null,
+        "socialLink": null,
+        "friendship": "incomingRequest"
+      },
+      "isMutual": false
+    },
+    {
+      "type": "new_request",
+      "id": 6,
+      "instant": "2026-10-24T09:00:00Z",
+      "isRead": true,
+      "from": {
+        "id": 32,
+        "accessHash": "boris-hash",
+        "nickname": "Boris",
+        "email": null,
+        "description": "",
+        "interests": [],
+        "avatar": { "id": 900, "accessHash": "avatar-hash" },
+        "socialLink": null,
+        "friendship": "friends"
+      },
+      "isMutual": true
+    },
+    {
+      "type": "indirect_replies",
+      "id": 5,
+      "instant": "2026-10-23T20:15:00Z",
+      "isRead": false,
+      "post": {
+        "id": 120,
+        "accessHash": "root-hash",
+        "instant": "2026-10-20T10:00:00Z",
+        "replyPreviews": [],
+        "newUnreadId": 125,
+        "text": "Who is up for a hike on Saturday?",
+        "owner": {
+          "id": 33,
+          "accessHash": "vera-hash",
+          "nickname": "Vera",
+          "email": null,
+          "description": "",
+          "interests": [],
+          "avatar": null,
+          "socialLink": null,
+          "friendship": "friends"
+        },
+        "edited": false
+      },
+      "commonDenominator": {
+        "type": "plain",
+        "id": 122,
+        "accessHash": "branch-hash",
+        "instant": "2026-10-21T08:30:00Z",
+        "replyPreviews": [],
+        "newUnreadId": 125,
+        "text": "I can bring the tent",
+        "owner": {
+          "id": 34,
+          "accessHash": "gleb-hash",
+          "nickname": "Gleb",
+          "email": null,
+          "description": "",
+          "interests": [],
+          "avatar": null,
+          "socialLink": null,
+          "friendship": "none"
+        },
+        "edited": true
+      }
+    },
+    {
+      "type": "new_reply",
+      "id": 4,
+      "instant": "2026-10-17T11:45:00Z",
+      "isRead": false,
+      "post": {
+        "id": 110,
+        "accessHash": "reply-hash",
+        "instant": "2026-10-17T11:45:00Z",
+        "replyPreviews": [],
+        "newUnreadId": null,
+        "text": "Thanks, see you there!",
+        "owner": {
+          "id": 33,
+          "accessHash": "vera-hash",
+          "nickname": "Vera",
+          "email": null,
+          "description": "",
+          "interests": [],
+          "avatar": null,
+          "socialLink": null,
+          "friendship": "friends"
+        },
+        "edited": false
+      }
+    }
+  ],
+  "nextId": null
+}
