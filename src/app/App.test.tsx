@@ -322,6 +322,48 @@ describe('session and notification integration', () => {
     expect(href('Open reply')).toBe('/post/110/reply-hash');
     await waitFor(() => expect(document.title).toBe('(3) Friendly'));
   });
+  it('refreshes notifications after accepting a friend request from one', async () => {
+    const anna = {
+      id: 31,
+      accessHash: 'anna-hash',
+      nickname: 'Anna',
+      description: '',
+      interests: [],
+      friendship: 'incomingRequest',
+    };
+    let accepted = false;
+    const request = () => ({
+      id: 7,
+      type: 'new_request',
+      instant: '2026-10-25T18:04:11Z',
+      isRead: accepted,
+      from: { ...anna, friendship: accepted ? 'friends' : 'incomingRequest' },
+      isMutual: false,
+    });
+    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    history.replaceState(null, '', '/activity');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>(async (url, options) => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/activity/list')
+          return new Response(JSON.stringify({ data: [request()], nextId: null }));
+        if (path === '/users/details2/31/anna-hash')
+          return new Response(JSON.stringify({ user: request().from, commonFriends: [] }));
+        if (path === '/friends/request' && options?.method === 'POST') {
+          accepted = true;
+          return new Response(null);
+        }
+        throw new Error(`Unexpected endpoint: ${path}`);
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(document.title).toBe('(1) Friendly'));
+    await user.click(await screen.findByRole('link', { name: 'Respond' }));
+    await user.click(await screen.findByRole('button', { name: 'Accept request' }));
+    await waitFor(() => expect(document.title).toBe('Friendly'));
+  });
   it('polls activity on a different page without enabling push', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     let events = [event];
