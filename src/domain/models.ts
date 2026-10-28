@@ -52,13 +52,24 @@ export interface Post {
   replyPreviews?: Person[];
 }
 
-export interface ActivityEvent {
+interface ActivityBase {
   id: number;
-  kind: 'reply' | 'unknown';
   instant: string;
   isRead: boolean;
-  post?: Post;
 }
+
+/**
+ * reply: `post` replied to one of the user's posts.
+ * indirectReplies: `post`, a root post the user follows, got new replies;
+ * `commonDenominator` is the closest post that leads to all of them.
+ * friendRequest: `from` sent a friend request, or accepted the user's request when `isMutual`.
+ * unknown: an activity type this client does not understand yet.
+ */
+export type ActivityEvent =
+  | (ActivityBase & { kind: 'reply'; post: Post })
+  | (ActivityBase & { kind: 'indirectReplies'; post: Post; commonDenominator: Post })
+  | (ActivityBase & { kind: 'friendRequest'; from: Person; isMutual: boolean })
+  | (ActivityBase & { kind: 'unknown' });
 
 export interface ActivityPage {
   items: ActivityEvent[];

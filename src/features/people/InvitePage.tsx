@@ -144,8 +144,9 @@ export function InvitePage() {
           onSubmit={form.handleSubmit(async ({ link }) => {
             try {
               await accept.mutateAsync(link);
+              // Accepting can settle a pending friend-request notification on the server.
               await Promise.all(
-                ['friends', 'discover', 'person'].map((key) =>
+                ['friends', 'discover', 'person', 'activity'].map((key) =>
                   client.invalidateQueries({ queryKey: [key] }),
                 ),
               );

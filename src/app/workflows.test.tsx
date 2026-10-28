@@ -30,7 +30,7 @@ afterEach(() => {
 const owner = { id: 2, nickname: 'Тестовый автор', description: '', interests: [] };
 const event = {
   id: 1,
-  type: 'reply',
+  type: 'new_reply',
   instant: '2026-09-30T12:00:00Z',
   isRead: false,
   post: {

@@ -19,8 +19,11 @@ export function FriendActions({ person }: { person: Person }) {
   if (!person.accessHash || person.id === userId) return null;
   async function act(action: 'request' | 'decline') {
     await operation.mutateAsync(action);
+    // The server marks the matching friend-request notification as read on accept or decline.
     await Promise.all(
-      ['person', 'friends', 'discover'].map((key) => client.invalidateQueries({ queryKey: [key] })),
+      ['person', 'friends', 'discover', 'activity'].map((key) =>
+        client.invalidateQueries({ queryKey: [key] }),
+      ),
     );
     toast.success(
       action === 'decline'

@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createHttp } from './http';
 import { createFriendlyGateway } from './friendly-gateway';
+import activityList from './fixtures/activity-list.json?raw';
 
 const authorization = { id: 42, token: 'test-token', accessHash: 'test-hash' };
 const json = (data: unknown) => new Response(JSON.stringify(data));
+/** `/activity/list` page in the shape of the Friendly backend's ActivityDetailsSerializable. */
+const activityFixture = () => activityList;
 
 describe('HTTP and protocol boundary', () => {
   it('sets authorization headers and escapes opaque cursor segments', async () => {
@@ -104,8 +107,86 @@ describe('HTTP and protocol boundary', () => {
       }),
     );
     const data = await createFriendlyGateway({ baseUrl: '', fetcher }).activityPage(null);
-    expect(data.items[0].kind).toBe('reply');
-    expect(data.items[0].post?.deleted).toBe(true);
+    expect(data.items[0]).toMatchObject({ kind: 'reply', post: { deleted: true } });
+  });
+  it('maps the current backend activity types from a recorded-shape payload', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(activityFixture()));
+    const data = await createFriendlyGateway({ baseUrl: '', fetcher }).activityPage(null);
+    expect(data.items.map((item) => [item.id, item.kind])).toEqual([
+      [7, 'friendRequest'],
+      [6, 'friendRequest'],
+      [5, 'indirectReplies'],
+      [4, 'reply'],
+    ]);
+    const [request, accepted, indirect, reply] = data.items;
+    expect(request).toMatchObject({
+      isMutual: false,
+      isRead: false,
+      from: { id: 31, accessHash: 'anna-hash', nickname: 'Anna', friendship: 'incomingRequest' },
+    });
+    expect(accepted).toMatchObject({
+      isMutual: true,
+      from: { nickname: 'Boris', avatar: { id: 900, accessHash: 'avatar-hash' } },
+    });
+    expect(indirect).toMatchObject({
+      post: { id: 120, text: 'Who is up for a hike on Saturday?', owner: { nickname: 'Vera' } },
+      commonDenominator: { id: 122, accessHash: 'branch-hash', text: 'I can bring the tent' },
+    });
+    expect(reply).toMatchObject({ post: { id: 110, text: 'Thanks, see you there!' } });
+  });
+  it('keeps the pre-rename reply type and a deleted common denominator', async () => {
+    const owner = { id: 2, accessHash: 'o', nickname: 'Owner', description: '', interests: [] };
+    const post = { id: 1, accessHash: 'p', text: 'Root', owner, instant: '2026-10-20T10:00:00Z' };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      json({
+        data: [
+          { id: 2, type: 'reply', instant: '2026-10-20T10:00:00Z', isRead: true, post },
+          {
+            id: 1,
+            type: 'indirect_replies',
+            instant: '2026-10-20T10:00:00Z',
+            isRead: false,
+            post,
+            commonDenominator: {
+              type: 'deleted',
+              id: 3,
+              accessHash: 'gone',
+              instant: '2026-10-20T10:00:00Z',
+              replyPreviews: [],
+              newUnreadId: null,
+            },
+          },
+        ],
+        nextId: null,
+      }),
+    );
+    const data = await createFriendlyGateway({ baseUrl: '', fetcher }).activityPage(null);
+    expect(data.items[0]).toMatchObject({ kind: 'reply', post: { text: 'Root' } });
+    expect(data.items[1]).toMatchObject({
+      kind: 'indirectReplies',
+      commonDenominator: { id: 3, accessHash: 'gone', deleted: true },
+    });
+  });
+  it('shows a known type with an unexpected payload as unknown without failing the page', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      json({
+        data: [
+          { id: 3, type: 'new_request', instant: '2026-10-20T10:00:00Z', isRead: false },
+          { id: 2, type: 'new_reply', instant: '2026-10-20T10:00:00Z', isRead: false, post: 1 },
+          {
+            id: 1,
+            type: 'new_request',
+            instant: '2026-10-20T10:00:00Z',
+            isRead: false,
+            from: { id: 5, nickname: 'Dina' },
+            isMutual: 'yes',
+          },
+        ],
+        nextId: null,
+      }),
+    );
+    const data = await createFriendlyGateway({ baseUrl: '', fetcher }).activityPage(null);
+    expect(data.items.map((item) => item.kind)).toEqual(['unknown', 'unknown', 'unknown']);
   });
   it('rejects malformed payloads and unsafe 64-bit IDs', async () => {
     for (const data of [

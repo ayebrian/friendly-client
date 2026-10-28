@@ -47,7 +47,7 @@ import { invitationReference, signInDestination } from '../shared/links';
 import { LoginPage } from '../features/session/LoginPage';
 import { ActivityProvider, useActivity } from '../features/activity/ActivityProvider';
 import { ActivityPage } from '../features/activity/ActivityPage';
-import { countLabel, unreadCount } from '../features/activity/service';
+import { activitySummary, countLabel, unreadCount } from '../features/activity/service';
 import { ProfilePage } from '../features/profile/ProfilePage';
 import { ThreadPage } from '../features/posts/ThreadPage';
 import { CommunityPage } from '../features/posts/CommunityPage';
@@ -302,11 +302,10 @@ function Shell({ logout, logoutError }: { logout: () => Promise<void>; logoutErr
   }, [label, showBadge]);
   useEffect(() => {
     if (!announcement) return;
-    toast.info(announcement.kind === 'reply' ? 'New reply' : 'New activity', {
+    const { title, description } = activitySummary(announcement);
+    toast.info(title, {
       id: `activity-${announcement.id}`,
-      description: announcement.post
-        ? `${announcement.post.owner.nickname}: ${announcement.post.text.slice(0, 90)}`
-        : 'Open notifications',
+      description,
       action: { label: 'View', onClick: () => void navigate('/activity') },
     });
     dismissAnnouncement();
