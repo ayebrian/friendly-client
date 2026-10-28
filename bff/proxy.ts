@@ -6,10 +6,11 @@
  * token out of the browser: it moves it into an HttpOnly `__Host-` cookie on sign-in and adds
  * the headers to upstream requests itself. Page scripts only ever see `{ id, accessHash }`.
  *
- * Requests carry the token only when the client asserts the signed-in account with a
- * non-secret `X-User-Id` header that matches the cookie. A same-origin `<img src="/api/…">`
- * or a form post therefore never runs with the user's credentials, and a tab that still
- * shows a previous account gets 409 instead of the new account's data.
+ * Each account has its own cookie (`__Host-friendly-session-<id>`), so a late sign-out or 401
+ * of one account can never delete the cookie of an account signed in meanwhile in another tab.
+ * Signing in removes the cookies of other accounts. Requests carry a token only when the
+ * client names the account with a non-secret `X-User-Id` header; a same-origin
+ * `<img src="/api/…">` or a form post therefore never runs with the user's credentials.
  */
 
 export interface BffEnv {
@@ -21,9 +22,7 @@ export interface BffDependencies {
   fetch?: typeof fetch;
 }
 
-export const SESSION_COOKIE = '__Host-friendly-session';
-/** Header the proxy sets on a 409 when the cookie belongs to another account. */
-export const SESSION_CHANGED_HEADER = 'X-Friendly-Session';
+export const SESSION_COOKIE_PREFIX = '__Host-friendly-session-';
 export const MIGRATE_PATH = '/_session/migrate';
 
 const DEFAULT_API_ORIGIN = 'https://api.getfriend.ly';
@@ -77,14 +76,13 @@ export async function handleApiRequest(
   if (path === MIGRATE_PATH) return migrate(request, api, fetcher);
   if (path.startsWith('/_session')) return failure(404, 'not_found');
 
-  const session = readSession(request.headers.get('Cookie'));
+  const sessions = readSessions(request.headers.get('Cookie'));
   const claimedUser = request.headers.get('X-User-Id');
+  let credentials: Session | null = null;
   if (claimedUser !== null) {
-    if (!session) return failure(401, 'no_session');
-    if (String(session.id) !== claimedUser)
-      return failure(409, 'session_changed', { [SESSION_CHANGED_HEADER]: 'changed' });
+    credentials = sessions.find((session) => String(session.id) === claimedUser) ?? null;
+    if (!credentials) return failure(401, 'no_session');
   }
-  const credentials = claimedUser !== null ? session : null;
 
   const target = new URL(api.origin + path + url.search);
   if (target.origin !== api.origin) return failure(400, 'bad_path');
@@ -115,18 +113,22 @@ export async function handleApiRequest(
     return failure(502, 'upstream_unreachable');
   }
 
-  if (request.method === 'POST' && SIGN_IN_PATHS.has(path) && upstream.ok) return signIn(upstream);
+  if (request.method === 'POST' && SIGN_IN_PATHS.has(path) && upstream.ok)
+    return signIn(upstream, sessions);
 
   const response = forward(upstream);
-  // A rejected token is gone for good (the backend has no refresh); drop the cookie with it.
+  // A rejected token is gone for good (the backend has no refresh); drop its cookie with it.
   // Sign-out ends the cookie once the backend has revoked the token.
   if (credentials && (upstream.status === 401 || (path === '/auth/logout' && upstream.ok)))
-    response.headers.append('Set-Cookie', clearCookie());
+    response.headers.append('Set-Cookie', clearCookie(credentials.id));
   return response;
 }
 
-/** Moves the token from a sign-in response into the cookie and returns the rest of the body. */
-async function signIn(upstream: Response): Promise<Response> {
+/**
+ * Moves the token from a sign-in response into the account's cookie, removes the cookies of
+ * other accounts and returns the rest of the body.
+ */
+async function signIn(upstream: Response, previous: Session[]): Promise<Response> {
   let body: unknown;
   try {
     body = JSON.parse(await upstream.text());
@@ -138,21 +140,22 @@ async function signIn(upstream: Response): Promise<Response> {
   const { token, ...account } = body;
   const response = json(upstream.status, account);
   response.headers.append('Set-Cookie', sessionCookie({ id: body.id, token }));
+  for (const session of previous)
+    if (session.id !== body.id) response.headers.append('Set-Cookie', clearCookie(session.id));
   return response;
 }
 
 /**
  * One-time move of a token that an earlier build kept in sessionStorage. The token is checked
  * against the backend before it becomes a cookie, and the response carries only the account.
+ * Other accounts' cookies are left alone: another tab may have signed in meanwhile.
  */
 async function migrate(request: Request, api: URL, fetcher: typeof fetch): Promise<Response> {
   if (request.method !== 'POST') return failure(405, 'method_not_allowed');
-  const length = Number(request.headers.get('Content-Length') ?? 0);
-  if (!(length <= MAX_MIGRATION_BODY)) return failure(413, 'too_large');
+  const text = await readLimited(request, MAX_MIGRATION_BODY);
+  if (text === null) return failure(413, 'too_large');
   let body: unknown;
   try {
-    const text = await request.text();
-    if (text.length > MAX_MIGRATION_BODY) return failure(413, 'too_large');
     body = JSON.parse(text);
   } catch {
     return failure(400, 'bad_request');
@@ -192,6 +195,33 @@ async function migrate(request: Request, api: URL, fetcher: typeof fetch): Promi
   return response;
 }
 
+/** Reads at most `limit` bytes of the body; returns null (and stops reading) above it. */
+async function readLimited(request: Request, limit: number): Promise<string | null> {
+  const declared = request.headers.get('Content-Length');
+  if (declared !== null && !(Number(declared) <= limit)) return null;
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 function forward(upstream: Response): Response {
   const headers = baseHeaders();
   for (const name of RESPONSE_HEADERS) {
@@ -212,45 +242,55 @@ function apiOrigin(env: BffEnv): URL {
   return api;
 }
 
-export function readSession(cookieHeader: string | null): Session | null {
-  if (!cookieHeader) return null;
-  for (const part of cookieHeader.split(';')) {
+/** All well-formed session cookies of the request; a malformed one counts as absent. */
+export function readSessions(cookieHeader: string | null): Session[] {
+  const sessions: Session[] = [];
+  for (const part of (cookieHeader ?? '').split(';')) {
     const separator = part.indexOf('=');
-    if (separator < 0 || part.slice(0, separator).trim() !== SESSION_COOKIE) continue;
+    const name = part.slice(0, separator).trim();
+    if (separator < 0 || !name.startsWith(SESSION_COOKIE_PREFIX)) continue;
     try {
       const value: unknown = JSON.parse(base64UrlDecode(part.slice(separator + 1).trim()));
-      if (isRecord(value) && isUserId(value.id) && isToken(value.token))
-        return { id: value.id, token: value.token };
+      if (
+        isRecord(value) &&
+        isUserId(value.id) &&
+        isToken(value.token) &&
+        name === cookieName(value.id) &&
+        !sessions.some((session) => session.id === value.id)
+      )
+        sessions.push({ id: value.id, token: value.token });
     } catch {
-      /* A malformed cookie is treated as no session. */
+      /* Ignore a malformed cookie. */
     }
-    return null;
   }
-  return null;
+  return sessions;
+}
+
+function cookieName(id: number) {
+  return `${SESSION_COOKIE_PREFIX}${id}`;
 }
 
 function sessionCookie(session: Session) {
   const value = base64UrlEncode(JSON.stringify({ id: session.id, token: session.token }));
-  return `${SESSION_COOKIE}=${value}; Max-Age=${SESSION_MAX_AGE}; ${COOKIE_ATTRIBUTES}`;
+  return `${cookieName(session.id)}=${value}; Max-Age=${SESSION_MAX_AGE}; ${COOKIE_ATTRIBUTES}`;
 }
 
-function clearCookie() {
-  return `${SESSION_COOKIE}=; Max-Age=0; ${COOKIE_ATTRIBUTES}`;
+function clearCookie(id: number) {
+  return `${cookieName(id)}=; Max-Age=0; ${COOKIE_ATTRIBUTES}`;
 }
 
 function baseHeaders() {
   return new Headers({ 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
 }
 
-function json(status: number, body: unknown, extra: Record<string, string> = {}) {
+function json(status: number, body: unknown) {
   const headers = baseHeaders();
   headers.set('Content-Type', 'application/json');
-  for (const [name, value] of Object.entries(extra)) headers.set(name, value);
   return new Response(JSON.stringify(body), { status, headers });
 }
 
-function failure(status: number, error: string, extra: Record<string, string> = {}) {
-  return json(status, { error }, extra);
+function failure(status: number, error: string) {
+  return json(status, { error });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

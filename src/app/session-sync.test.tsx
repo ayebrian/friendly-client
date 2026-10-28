@@ -21,7 +21,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/** The proxy answers for whichever account its cookie currently holds. */
+/** The proxy holds a cookie for one account; signing in replaces it. */
 function proxy() {
   const state = { cookie: first.id as number | null };
   const fetcher = vi.fn<typeof fetch>(async (url, options) => {
@@ -38,7 +38,7 @@ function proxy() {
     }
     const claimed = headers.get('X-User-Id');
     if (claimed !== null && Number(claimed) !== state.cookie)
-      return new Response(null, { status: 409, headers: { 'X-Friendly-Session': 'changed' } });
+      return new Response(JSON.stringify({ error: 'no_session' }), { status: 401 });
     if (path === '/activity/list') return new Response(JSON.stringify({ data: [], nextId: null }));
     if (path === '/feed/queue') return new Response(JSON.stringify({ entries: [] }));
     if (path === '/network/details') return new Response(JSON.stringify({ friends: [] }));
@@ -138,7 +138,7 @@ describe('cookie session shared by tabs', () => {
     await screen.findByRole('heading', { name: 'Sign in to Friendly' });
   });
 
-  it('switches to the account the cookie now holds when the proxy reports a change', async () => {
+  it('follows the account signed in elsewhere when its own cookie is gone', async () => {
     localStorage.setItem(key, JSON.stringify(first));
     history.replaceState(null, '', '/profile');
     const { state } = proxy();
@@ -155,13 +155,13 @@ describe('cookie session shared by tabs', () => {
     expect(JSON.parse(localStorage.getItem(key)!)).toEqual(second);
   });
 
-  it('ends the tab session when the proxy reports a change it cannot follow', async () => {
+  it('ends the tab session when its cookie is gone and no other account is known', async () => {
     localStorage.setItem(key, JSON.stringify(first));
     history.replaceState(null, '', '/profile');
     const { state } = proxy();
     state.cookie = second.id;
     render(<App />);
-    await screen.findByText('You signed in to another account in a different tab.');
+    await screen.findByText('Your session has ended. Please sign in again.');
     expect(screen.getByRole('heading', { name: 'Sign in to Friendly' })).toBeTruthy();
     expect(localStorage.getItem(key)).toBeNull();
   });

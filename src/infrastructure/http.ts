@@ -4,13 +4,11 @@ export interface HttpOptions {
   /** Same-origin proxy prefix (`/api`); it adds the credentials from its HttpOnly cookie. */
   baseUrl: string;
   /**
-   * Signed-in account. Sent as `X-User-Id` so the proxy attaches the session cookie's token
-   * only for this account; the header is not a credential.
+   * Signed-in account. Sent as `X-User-Id` so the proxy attaches the token from this
+   * account's session cookie; the header is not a credential.
    */
   userId?: number;
   onUnauthorized?: () => void;
-  /** The session cookie now belongs to another account (signed in from another tab). */
-  onSessionChanged?: () => void;
   fetcher?: typeof fetch;
   sessionSignal?: () => AbortSignal;
 }
@@ -19,7 +17,6 @@ export function createHttp({
   baseUrl,
   userId,
   onUnauthorized,
-  onSessionChanged,
   fetcher = fetch,
   sessionSignal,
 }: HttpOptions) {
@@ -52,14 +49,6 @@ export function createHttp({
     signal.throwIfAborted();
     if (!response.ok) {
       if (response.status === 401 && authenticated) onUnauthorized?.();
-      if (
-        response.status === 409 &&
-        authenticated &&
-        response.headers.get('X-Friendly-Session') === 'changed'
-      ) {
-        onSessionChanged?.();
-        throw new ApiError(409, 'You signed in to another account in a different tab.');
-      }
       const messages: Record<number, string> = {
         400: 'Please check the information you entered.',
         401: authenticated

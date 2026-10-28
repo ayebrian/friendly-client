@@ -100,6 +100,45 @@ describe('migration of a token saved by an earlier build', () => {
     expect(sessionStore.read()).toBeNull();
   });
 
+  it('keeps the token and releases the tab when the proxy does not answer in time', async () => {
+    sessionStorage.setItem(legacyKey, JSON.stringify(legacy));
+    const fetcher = vi.fn<typeof fetch>(
+      (_url, options) =>
+        new Promise<Response>((_resolve, reject) =>
+          options?.signal?.addEventListener('abort', () => reject(options.signal!.reason)),
+        ),
+    );
+    expect(await migrateLegacySession('/api', fetcher, 20)).toBeNull();
+    expect(sessionStorage.getItem(legacyKey)).not.toBeNull();
+  });
+
+  it('keeps an account that another tab signed in while the migration was pending', async () => {
+    sessionStorage.setItem(legacyKey, JSON.stringify(legacy));
+    const fetcher = proxy(async () => {
+      localStorage.setItem(key, JSON.stringify(other));
+      return new Response(JSON.stringify(account));
+    });
+    expect(await migrateLegacySession('/api', fetcher)).toEqual({
+      authorization: other,
+      pendingLogout: false,
+    });
+    expect(JSON.parse(localStorage.getItem(key)!)).toEqual(other);
+    expect(sessionStorage.getItem(legacyKey)).toBeNull();
+  });
+
+  it('does not migrate when this browser is already signed in', async () => {
+    sessionStorage.setItem(legacyKey, JSON.stringify(legacy));
+    sessionStore.write(other);
+    sessionStorage.setItem(legacyKey, JSON.stringify(legacy));
+    const fetcher = proxy(async () => new Response(JSON.stringify(account)));
+    expect(await migrateLegacySession('/api', fetcher)).toEqual({
+      authorization: other,
+      pendingLogout: false,
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(legacyKey)).toBeNull();
+  });
+
   it('ignores a malformed earlier session without calling the proxy', async () => {
     sessionStorage.setItem(legacyKey, JSON.stringify({ id: 1 }));
     const fetcher = proxy(async () => new Response(JSON.stringify(account)));

@@ -156,35 +156,43 @@ let migration: Promise<StoredSession | null> | null = null;
 /**
  * Hands a token saved by an earlier build to the proxy, which checks it and keeps it in the
  * HttpOnly cookie, then deletes the readable copy. A rejected token is deleted as well; after
- * a network or server failure it stays for the next page load and the tab starts signed out.
+ * a network or server failure or a timeout it stays for the next page load and the tab
+ * starts signed out. An account signed in by another tab always wins over the migrated one.
  */
-export function migrateLegacySession(baseUrl: string, fetcher: typeof fetch = fetch) {
+export function migrateLegacySession(
+  baseUrl: string,
+  fetcher: typeof fetch = fetch,
+  timeout = 15_000,
+) {
   migration ??= (async () => {
+    // read() drops the readable copy when another tab has already signed in.
+    const current = sessionStore.read();
+    if (current) return current;
     const legacy = readLegacySession();
     if (!legacy) return null;
-    let response: Response;
+    let authorization: Authorization;
     try {
-      response = await fetcher(`${baseUrl.replace(/\/$/, '')}/_session/migrate`, {
+      const response = await fetcher(`${baseUrl.replace(/\/$/, '')}/_session/migrate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
         body: JSON.stringify({ id: legacy.id, token: legacy.token }),
+        // Covers the response body too; the restoring screen must not wait forever.
+        signal: AbortSignal.timeout(timeout),
       });
-    } catch {
-      return null;
-    }
-    if (!response.ok) {
-      if ([400, 401, 403].includes(response.status)) clearLegacySession();
-      return null;
-    }
-    let authorization: Authorization;
-    try {
+      if (!response.ok) {
+        if ([400, 401, 403].includes(response.status)) clearLegacySession();
+        return null;
+      }
       authorization = authorizationSchema.parse(await response.json());
     } catch {
       return null;
     }
-    // The cookie now holds this account, even if another tab signed in meanwhile, so the
-    // shared marker follows it.
+    // Another tab signed in while this request was pending: its account wins. The migrated
+    // account's cookie stays unused until the next sign-in removes it. (A sign-out in another
+    // tab cannot be told apart here; the earlier tab-scoped session would have survived it.)
+    const now = sessionStore.read();
+    if (now) return now;
     if (legacy.pendingLogout) {
       save(JSON.stringify({ pendingLogout: account(authorization) }));
       clearLegacySession();

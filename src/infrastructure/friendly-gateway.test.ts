@@ -39,28 +39,6 @@ describe('HTTP and protocol boundary', () => {
       'https://api.example.test/files/download/3/a%2Fb',
     );
   });
-  it('follows the proxy when the session cookie belongs to another account', async () => {
-    const onUnauthorized = vi.fn();
-    const onSessionChanged = vi.fn();
-    const fetcher = vi.fn<typeof fetch>().mockImplementation(
-      async () =>
-        new Response(JSON.stringify({ error: 'session_changed' }), {
-          status: 409,
-          headers: { 'X-Friendly-Session': 'changed' },
-        }),
-    );
-    await expect(
-      createHttp({ baseUrl: '', userId, fetcher, onUnauthorized, onSessionChanged })('/feed/queue'),
-    ).rejects.toMatchObject({ status: 409 });
-    expect(onSessionChanged).toHaveBeenCalledOnce();
-    expect(onUnauthorized).not.toHaveBeenCalled();
-    // A backend conflict is not a session change.
-    fetcher.mockResolvedValue(new Response(null, { status: 409 }));
-    await expect(
-      createHttp({ baseUrl: '', userId, fetcher, onSessionChanged })('/feed/queue'),
-    ).rejects.toMatchObject({ status: 409 });
-    expect(onSessionChanged).toHaveBeenCalledOnce();
-  });
   it('expires authenticated sessions on 401 only', async () => {
     const onUnauthorized = vi.fn();
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 401 }));

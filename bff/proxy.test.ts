@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { handleApiRequest, readSession, SESSION_COOKIE } from './proxy';
+import { handleApiRequest, readSessions, SESSION_COOKIE_PREFIX } from './proxy';
 import { onRequest } from '../functions/api/[[path]]';
 
 const origin = 'https://friendly.example';
@@ -13,7 +13,7 @@ function cookieFor(id: number, token: string) {
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/, '');
-  return `${SESSION_COOKIE}=${value}`;
+  return `${SESSION_COOKIE_PREFIX}${id}=${value}`;
 }
 const signedIn = { Cookie: `theme=dark; ${cookieFor(42, secret)}` };
 
@@ -56,14 +56,14 @@ describe('sign-in', () => {
       expect(text).not.toContain(secret);
       expect(JSON.parse(text)).toEqual(account);
       const cookie = response.headers.get('Set-Cookie')!;
-      expect(cookie).toMatch(new RegExp(`^${SESSION_COOKIE}=[A-Za-z0-9_-]+;`));
+      expect(cookie).toMatch(new RegExp(`^${SESSION_COOKIE_PREFIX}42=[A-Za-z0-9_-]+;`));
       expect(cookie).not.toContain(secret);
       expect(cookie).toContain('HttpOnly');
       expect(cookie).toContain('Secure');
       expect(cookie).toContain('SameSite=Strict');
       expect(cookie).toContain('Path=/');
       expect(cookie).not.toMatch(/Domain=/i);
-      expect(readSession(cookie.split(';')[0])).toEqual({ id: 42, token: secret });
+      expect(readSessions(cookie.split(';')[0])).toEqual([{ id: 42, token: secret }]);
       expect(response.headers.get('Cache-Control')).toBe('no-store');
       const forwarded = sent(fetcher);
       expect(forwarded.url).toBe(`${api}${path}`);
@@ -71,6 +71,23 @@ describe('sign-in', () => {
       expect(await forwarded.json()).toEqual({ email: 'test@example.test', code: 12345678 });
     },
   );
+
+  it('removes the cookies of other accounts and keeps unrelated cookies', async () => {
+    const fetcher = upstream(() => json({ ...account, token: secret }));
+    const response = await handleApiRequest(
+      request('/api/auth/login', {
+        method: 'POST',
+        headers: { Cookie: `theme=dark; ${cookieFor(7, 'test-other-token')}` },
+        body: '{}',
+      }),
+      env,
+      { fetch: fetcher },
+    );
+    const cookies = response.headers.getSetCookie();
+    expect(cookies).toHaveLength(2);
+    expect(cookies[0]).toMatch(new RegExp(`^${SESSION_COOKIE_PREFIX}42=[A-Za-z0-9_-]+;`));
+    expect(cookies[1]).toMatch(new RegExp(`^${SESSION_COOKIE_PREFIX}7=; Max-Age=0;`));
+  });
 
   it('passes a failed sign-in through without a cookie', async () => {
     const fetcher = upstream(() => new Response(null, { status: 403 }));
@@ -191,7 +208,7 @@ describe('authenticated proxying', () => {
     const fetcher = upstream(() => json({}));
     const response = await handleApiRequest(
       request('/api/activity/list', {
-        headers: { 'X-User-Id': '42', Cookie: `${SESSION_COOKIE}=%%%` },
+        headers: { 'X-User-Id': '42', Cookie: `${SESSION_COOKIE_PREFIX}42=%%%` },
       }),
       env,
       { fetch: fetcher },
@@ -200,16 +217,38 @@ describe('authenticated proxying', () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it('answers 409 when the cookie belongs to a different account', async () => {
+  it('uses only the cookie of the account the client names', async () => {
     const fetcher = upstream(() => json({}));
+    const cookies = { Cookie: `${cookieFor(7, 'test-other-token')}; ${cookieFor(42, secret)}` };
+    await handleApiRequest(
+      request('/api/activity/list', { headers: { ...cookies, 'X-User-Id': '7' } }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(sent(fetcher).headers.get('X-Token')).toBe('test-other-token');
+    expect(sent(fetcher).headers.get('X-User-Id')).toBe('7');
     const response = await handleApiRequest(
       request('/api/activity/list', { headers: { ...signedIn, 'X-User-Id': '7' } }),
       env,
       { fetch: fetcher },
     );
-    expect(response.status).toBe(409);
-    expect(response.headers.get('X-Friendly-Session')).toBe('changed');
+    expect(response.status).toBe(401);
     expect(response.headers.get('Set-Cookie')).toBeNull();
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it('ignores a cookie whose name does not match the account inside it', async () => {
+    const fetcher = upstream(() => json({}));
+    const forged = cookieFor(42, secret).replace(
+      `${SESSION_COOKIE_PREFIX}42=`,
+      `${SESSION_COOKIE_PREFIX}7=`,
+    );
+    const response = await handleApiRequest(
+      request('/api/activity/list', { headers: { Cookie: forged, 'X-User-Id': '7' } }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(response.status).toBe(401);
     expect(fetcher).not.toHaveBeenCalled();
   });
 
@@ -222,7 +261,9 @@ describe('authenticated proxying', () => {
     );
     expect(response.status).toBe(401);
     expect(response.headers.get('Set-Cookie')).toMatch(
-      new RegExp(`^${SESSION_COOKIE}=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Strict$`),
+      new RegExp(
+        `^${SESSION_COOKIE_PREFIX}42=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Strict$`,
+      ),
     );
   });
 
@@ -284,6 +325,25 @@ describe('sign-out', () => {
     expect(response.headers.get('Set-Cookie')).toMatch(/Max-Age=0/);
   });
 
+  it('ends only the signed-out account when the response arrives after another sign-in', async () => {
+    const fetcher = upstream(() => json({}));
+    // Account 7 signed in from another tab while the sign-out of 42 was in flight.
+    const response = await handleApiRequest(
+      request('/api/auth/logout', {
+        method: 'POST',
+        headers: {
+          Cookie: `${cookieFor(42, secret)}; ${cookieFor(7, 'test-other-token')}`,
+          'X-User-Id': '42',
+        },
+      }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(response.headers.getSetCookie()).toEqual([
+      `${SESSION_COOKIE_PREFIX}42=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Strict`,
+    ]);
+  });
+
   it('keeps the cookie when the backend could not revoke the token', async () => {
     const fetcher = upstream(() => new Response(null, { status: 500 }));
     const response = await handleApiRequest(
@@ -340,10 +400,44 @@ describe('migration of a token from an earlier build', () => {
     const text = await response.text();
     expect(text).not.toContain(secret);
     expect(JSON.parse(text)).toEqual(account);
-    expect(readSession(response.headers.get('Set-Cookie')!.split(';')[0])).toEqual({
-      id: 42,
-      token: secret,
+    expect(readSessions(response.headers.get('Set-Cookie')!.split(';')[0])).toEqual([
+      { id: 42, token: secret },
+    ]);
+  });
+
+  it('leaves the cookie of an account that signed in meanwhile alone', async () => {
+    const fetcher = upstream(() => json({ user: account }));
+    const response = await handleApiRequest(
+      request('/api/_session/migrate', {
+        method: 'POST',
+        headers: { Cookie: cookieFor(7, 'test-other-token') },
+        body: JSON.stringify({ id: 42, token: secret }),
+      }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(response.headers.getSetCookie()).toHaveLength(1);
+    expect(response.headers.get('Set-Cookie')).toMatch(new RegExp(`^${SESSION_COOKIE_PREFIX}42=`));
+  });
+
+  it('stops reading an oversized streamed body at the limit', async () => {
+    const fetcher = upstream(() => json({}));
+    let pulled = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1024;
+        if (pulled > 1024 * 1024) controller.close();
+        else controller.enqueue(new Uint8Array(1024).fill(32));
+      },
     });
+    const response = await handleApiRequest(
+      request('/api/_session/migrate', { method: 'POST', body }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(response.status).toBe(413);
+    expect(pulled).toBeLessThan(16 * 1024);
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it('does not store a token that the backend rejects', async () => {

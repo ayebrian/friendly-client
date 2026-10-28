@@ -96,10 +96,8 @@ export function App() {
         end(value, '');
       },
       expire(value: Authorization) {
-        end(value, 'Your session has ended. Please sign in again.');
-      },
-      // The proxy's cookie belongs to another account: follow it if this tab knows which.
-      changed(value: Authorization) {
+        // Signing in elsewhere removes this account's cookie. If this tab missed the storage
+        // event, follow the account that is signed in now instead of showing sign-in.
         const stored = sessionStore.read();
         if (stored && !stored.pendingLogout && !sameAuthorization(stored.authorization, value)) {
           setNotice('');
@@ -108,7 +106,7 @@ export function App() {
               ? { authorization: stored.authorization, pendingLogout: false }
               : current,
           );
-        } else end(value, 'You signed in to another account in a different tab.');
+        } else end(value, 'Your session has ended. Please sign in again.');
       },
     };
   }, []);
@@ -159,7 +157,6 @@ export function App() {
               session={session}
               logout={actions.logout}
               expire={actions.expire}
-              changed={actions.changed}
             />
           ) : (
             <Routes>
@@ -202,12 +199,10 @@ function SessionApp({
   session,
   logout,
   expire,
-  changed,
 }: {
   session: Session;
   logout: (value: Authorization) => void;
   expire: (value: Authorization) => void;
-  changed: (value: Authorization) => void;
 }) {
   const client = useMemo(
     () =>
@@ -249,7 +244,6 @@ function SessionApp({
       userId: account.id,
       sessionSignal: () => lifetime.current.signal,
       onUnauthorized: () => expire(account),
-      onSessionChanged: () => changed(account),
     });
     // Revocation must remain usable when the account lifetime has been aborted.
     const logoutGateway = createFriendlyGateway({ baseUrl, mediaBaseUrl, userId: account.id });
@@ -297,7 +291,7 @@ function SessionApp({
       enablePush: () => enablePush(gateway, lifetime.current.signal),
       disablePush,
     };
-  }, [session, logout, expire, changed, lifetime, mounted, client]);
+  }, [session, logout, expire, lifetime, mounted, client]);
   useEffect(() => {
     if (session.pendingLogout) void runtime.logout();
   }, [runtime, session.pendingLogout]);
