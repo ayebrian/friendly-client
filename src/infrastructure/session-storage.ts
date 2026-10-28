@@ -50,7 +50,9 @@ function save(value: string | null) {
     put(tab, null);
     return true;
   }
-  // Storage for the origin is blocked: fall back to the tab, then to memory only.
+  // localStorage refuses writes (blocked, quota): drop its copy so read() sees the tab's,
+  // then fall back to the tab and finally to memory only.
+  put(local, null);
   return put(tab, value);
 }
 
@@ -62,7 +64,11 @@ function save(value: string | null) {
 export const sessionStore = {
   read(): StoredSession | null {
     const stored = get(local);
-    if (stored !== null) return parse(stored);
+    if (stored !== null) {
+      // The shared copy wins; a leftover tab copy could later resurrect an older account.
+      if (get(tab) !== null) put(tab, null);
+      return parse(stored);
+    }
     const legacy = get(tab);
     if (legacy === null) return null;
     const session = parse(legacy);
@@ -79,6 +85,9 @@ export const sessionStore = {
     if (!current || sameAuthorization(current.authorization, value)) this.write(null);
   },
   beginLogout(value: Authorization) {
+    const current = this.read();
+    // Another tab has already switched the stored account; revoke `value` without touching it.
+    if (current && !sameAuthorization(current.authorization, value)) return;
     // A failed marker write must not leave a restorable active session behind.
     if (!save(JSON.stringify({ pendingLogout: value }))) this.write(null);
   },
@@ -96,8 +105,8 @@ export const sessionStore = {
       } catch {
         return;
       }
-      // key === null means the whole origin storage was cleared.
-      listener(event.key === null ? null : parse(event.newValue));
+      // Events can arrive late; current storage, not event.newValue, is the truth.
+      listener(sessionStore.read());
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);

@@ -75,6 +75,20 @@ describe('account persistence across tabs and restarts', () => {
     expect(screen.queryByText('Your session has ended. Please sign in again.')).toBeNull();
   });
 
+  it('ignores a late event from another tab that no longer matches storage', async () => {
+    localStorage.setItem(key, JSON.stringify(auth));
+    history.replaceState(null, '', '/activity');
+    stubActivity();
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Notifications' });
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent('storage', { key, newValue: null, storageArea: localStorage }),
+      );
+    });
+    expect(screen.getByRole('heading', { name: 'Notifications' })).toBeTruthy();
+  });
+
   it('does not let a late 401 for an old token clear an account signed in elsewhere', async () => {
     localStorage.setItem(key, JSON.stringify(auth));
     history.replaceState(null, '', '/activity');
