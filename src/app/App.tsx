@@ -24,7 +24,12 @@ import {
 } from 'lucide-react';
 import type { Authorization } from '../domain/models';
 import { createFriendlyGateway } from '../infrastructure/friendly-gateway';
-import { sessionStorageAdapter } from '../infrastructure/session-storage';
+import {
+  hasLegacySession,
+  migrateLegacySession,
+  sameAuthorization,
+  sessionStore,
+} from '../infrastructure/session-storage';
 import { RuntimeContext } from '../shared/runtime';
 import { ApiError, errorMessage } from '../shared/errors';
 import { ErrorNotice } from '../shared/feedback';
@@ -62,40 +67,97 @@ import { RegisterPage } from '../features/session/RegisterPage';
 import { PreferencesProvider } from '../shared/preferences';
 import { enablePush, disablePush } from '../infrastructure/push';
 
-const baseUrl = import.meta.env.VITE_API_BASE_URL || 'https://api.getfriend.ly';
+// API requests go through the same-origin proxy (bff/proxy.ts), which keeps the token in
+// an HttpOnly cookie. Media capability URLs still load directly from the public API.
+const baseUrl = '/api';
+const mediaBaseUrl = import.meta.env.VITE_API_BASE_URL || 'https://api.getfriend.ly';
 type Session = { authorization: Authorization; pendingLogout: boolean };
 
 export function App() {
-  const [session, setSession] = useState<Session | null>(() => sessionStorageAdapter.read());
+  const [session, setSession] = useState<Session | null>(() => sessionStore.read());
+  const [restoring, setRestoring] = useState(() => !session && hasLegacySession());
   const [notice, setNotice] = useState('');
   const location = useLocation();
-  const publicGateway = useMemo(() => createFriendlyGateway({ baseUrl }), []);
-  const actions = useMemo(
-    () => ({
+  const publicGateway = useMemo(() => createFriendlyGateway({ baseUrl, mediaBaseUrl }), []);
+  const actions = useMemo(() => {
+    // Each action ends only `value`: another tab may already have signed in to another account.
+    const end = (value: Authorization, message: string) => {
+      sessionStore.clear(value);
+      setSession((current) => endSession(current, value));
+      setNotice(message);
+    };
+    return {
       login(value: Authorization) {
-        sessionStorageAdapter.write(value);
+        sessionStore.write(value);
         setNotice('');
         setSession({ authorization: value, pendingLogout: false });
       },
-      logout() {
-        sessionStorageAdapter.write(null);
-        setSession(null);
+      logout(value: Authorization) {
+        end(value, '');
+      },
+      expire(value: Authorization) {
+        // Signing in elsewhere removes this account's cookie. If this tab missed the storage
+        // event, follow the account that is signed in now instead of showing sign-in.
+        const stored = sessionStore.read();
+        if (stored && !stored.pendingLogout && !sameAuthorization(stored.authorization, value)) {
+          setNotice('');
+          setSession((current) =>
+            current && sameAuthorization(current.authorization, value)
+              ? { authorization: stored.authorization, pendingLogout: false }
+              : current,
+          );
+        } else end(value, 'Your session has ended. Please sign in again.');
+      },
+    };
+  }, []);
+  // A token saved by an earlier build moves into the proxy's HttpOnly cookie once.
+  useEffect(() => {
+    if (!restoring) return;
+    let active = true;
+    void migrateLegacySession(baseUrl).then((restored) => {
+      if (!active) return;
+      if (restored)
+        setSession((current) =>
+          current &&
+          current.pendingLogout === restored.pendingLogout &&
+          sameAuthorization(current.authorization, restored.authorization)
+            ? current
+            : restored,
+        );
+      setRestoring(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [restoring]);
+  // The cookie is shared by all tabs: follow sign-in and sign-out made in another tab.
+  useEffect(
+    () =>
+      sessionStore.subscribe((next) => {
         setNotice('');
-      },
-      expire() {
-        sessionStorageAdapter.write(null);
-        setSession(null);
-        setNotice('Your session has ended. Please sign in again.');
-      },
-    }),
+        setSession((current) => {
+          // Another tab is revoking or has revoked the stored account.
+          if (!next || next.pendingLogout) return null;
+          if (current && sameAuthorization(current.authorization, next.authorization))
+            return current;
+          return { authorization: next.authorization, pendingLogout: false };
+        });
+      }),
     [],
   );
+  if (restoring) return <StatusPage title="Restoring your session…" text="Signing you in." />;
   return (
     <PreferencesProvider>
       <TooltipProvider delayDuration={300}>
         <>
           {session ? (
-            <SessionApp session={session} logout={actions.logout} expire={actions.expire} />
+            <SessionApp
+              // A different account always gets a fresh tree and QueryClient.
+              key={`${session.authorization.id}:${session.authorization.accessHash}`}
+              session={session}
+              logout={actions.logout}
+              expire={actions.expire}
+            />
           ) : (
             <Routes>
               <Route
@@ -129,14 +191,18 @@ export function App() {
   );
 }
 
+function endSession(current: Session | null, value: Authorization) {
+  return current && sameAuthorization(current.authorization, value) ? null : current;
+}
+
 function SessionApp({
   session,
   logout,
   expire,
 }: {
   session: Session;
-  logout: () => void;
-  expire: () => void;
+  logout: (value: Authorization) => void;
+  expire: (value: Authorization) => void;
 }) {
   const client = useMemo(
     () =>
@@ -171,27 +237,26 @@ function SessionApp({
     };
   }, [lifetime, mounted]);
   const runtime = useMemo(() => {
+    const account = session.authorization;
     const gateway = createFriendlyGateway({
       baseUrl,
-      authorization: session.authorization,
+      mediaBaseUrl,
+      userId: account.id,
       sessionSignal: () => lifetime.current.signal,
-      onUnauthorized: expire,
+      onUnauthorized: () => expire(account),
     });
     // Revocation must remain usable when the account lifetime has been aborted.
-    const logoutGateway = createFriendlyGateway({
-      baseUrl,
-      authorization: session.authorization,
-    });
+    const logoutGateway = createFriendlyGateway({ baseUrl, mediaBaseUrl, userId: account.id });
     return {
       gateway,
-      mediaBaseUrl: baseUrl,
+      mediaBaseUrl,
       imageProxyUrl: import.meta.env.VITE_IMAGE_PROXY_URL || undefined,
       userId: session.authorization.id,
       logout: async () => {
         if (logoutBusy.current) return;
         logoutBusy.current = true;
         // The stored marker prevents a reload from reopening authenticated routes.
-        sessionStorageAdapter.beginLogout(session.authorization);
+        sessionStore.beginLogout(account);
         setLogoutError('');
         setSigningOut(true);
         // Stop account operations immediately; the revoke call has its own lifetime.
@@ -202,7 +267,7 @@ function SessionApp({
           // The server has already rejected this token, so there is nothing left to revoke.
           if (!(error instanceof ApiError && error.status === 401)) {
             if (mounted.current) {
-              sessionStorageAdapter.restoreAfterFailedLogout(session.authorization);
+              sessionStore.restoreAfterFailedLogout(account);
               lifetime.current = new AbortController();
               setLogoutError(
                 `Could not confirm sign-out. This account is still open in this tab. ${errorMessage(error)}`,
@@ -220,7 +285,7 @@ function SessionApp({
           return;
         }
         void disablePush().catch(() => {});
-        logout();
+        logout(account);
         logoutBusy.current = false;
       },
       enablePush: () => enablePush(gateway, lifetime.current.signal),
@@ -249,7 +314,8 @@ function SessionApp({
     },
     [client],
   );
-  if (signingOut) return <SigningOutPage />;
+  if (signingOut)
+    return <StatusPage title="Signing out…" text="Ending your session on Friendly." />;
   return (
     <RuntimeContext value={runtime}>
       <QueryClientProvider client={client}>
@@ -269,16 +335,16 @@ function SessionApp({
   );
 }
 
-function SigningOutPage() {
+function StatusPage({ title, text }: { title: string; text: string }) {
   return (
     <main className="registration-layout">
       <section className="registration-panel">
         <div className="wordmark">
           <BrandLogo />
         </div>
-        <h1>Signing out…</h1>
+        <h1>{title}</h1>
         <p role="status" className="muted">
-          Ending your session on Friendly.
+          {text}
         </p>
       </section>
     </main>

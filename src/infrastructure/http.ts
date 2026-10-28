@@ -1,9 +1,13 @@
 import { ApiError } from '../shared/errors';
-import type { Authorization } from '../domain/models';
 
 export interface HttpOptions {
+  /** Same-origin proxy prefix (`/api`); it adds the credentials from its HttpOnly cookie. */
   baseUrl: string;
-  authorization?: Authorization;
+  /**
+   * Signed-in account. Sent as `X-User-Id` so the proxy attaches the token from this
+   * account's session cookie; the header is not a credential.
+   */
+  userId?: number;
   onUnauthorized?: () => void;
   fetcher?: typeof fetch;
   sessionSignal?: () => AbortSignal;
@@ -11,19 +15,17 @@ export interface HttpOptions {
 
 export function createHttp({
   baseUrl,
-  authorization,
+  userId,
   onUnauthorized,
   fetcher = fetch,
   sessionSignal,
 }: HttpOptions) {
+  const authenticated = userId !== undefined;
   return async function request(path: string, options: RequestInit = {}): Promise<unknown> {
     const headers = new Headers(options.headers);
     if (options.body && !(options.body instanceof FormData))
       headers.set('Content-Type', 'application/json');
-    if (authorization) {
-      headers.set('X-Token', authorization.token);
-      headers.set('X-User-Id', String(authorization.id));
-    }
+    if (authenticated) headers.set('X-User-Id', String(userId));
     const lifetime = sessionSignal?.();
     const signal = AbortSignal.any([
       AbortSignal.timeout(options.body instanceof FormData ? 60_000 : 15_000),
@@ -36,6 +38,8 @@ export function createHttp({
       response = await fetcher(`${baseUrl.replace(/\/$/, '')}${path}`, {
         ...options,
         headers,
+        // The session cookie is same-origin only; never send it anywhere else.
+        credentials: 'same-origin',
         signal,
       });
     } catch (error) {
@@ -44,13 +48,13 @@ export function createHttp({
     }
     signal.throwIfAborted();
     if (!response.ok) {
-      if (response.status === 401 && authorization) onUnauthorized?.();
+      if (response.status === 401 && authenticated) onUnauthorized?.();
       const messages: Record<number, string> = {
         400: 'Please check the information you entered.',
-        401: authorization
+        401: authenticated
           ? 'Your session has ended. Please sign in again.'
           : 'No account was found for this email.',
-        403: authorization
+        403: authenticated
           ? 'You do not have permission to perform this action.'
           : 'Access denied or your sign-in code has expired.',
         404: 'This item could not be found.',

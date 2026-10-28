@@ -7,11 +7,8 @@ import type { HttpOptions } from './http';
 
 const id = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const instant = z.iso.datetime({ offset: true });
-export const authorizationSchema = z.object({
-  id,
-  token: z.string().min(1),
-  accessHash: z.string().min(1),
-});
+// The proxy strips the token from sign-in responses; any other field is dropped here too.
+export const authorizationSchema = z.object({ id, accessHash: z.string().min(1) });
 const fileSchema = z.object({ id, accessHash: z.string().min(1) });
 const personSchema = z.object({
   id,
@@ -128,7 +125,12 @@ function mapBranch(value: unknown): ReplyBranch {
 const pageSchema = z.object({ data: z.array(z.unknown()), nextId: z.string().nullable() });
 const part = encodeURIComponent;
 
-export function createFriendlyGateway(options: HttpOptions): FriendlyGateway {
+export interface FriendlyGatewayOptions extends HttpOptions {
+  /** Public API origin for capability media URLs, which the browser loads directly. */
+  mediaBaseUrl?: string;
+}
+
+export function createFriendlyGateway(options: FriendlyGatewayOptions): FriendlyGateway {
   const request = createHttp(options);
   return {
     async logout(signal) {
@@ -166,7 +168,8 @@ export function createFriendlyGateway(options: HttpOptions): FriendlyGateway {
       );
     },
     fileUrl(file) {
-      return `${options.baseUrl.replace(/\/$/, '')}/files/download/${file.id}/${part(file.accessHash)}`;
+      const base = options.mediaBaseUrl ?? options.baseUrl;
+      return `${base.replace(/\/$/, '')}/files/download/${file.id}/${part(file.accessHash)}`;
     },
     async uploadMedia(file, signal) {
       const body = new FormData();

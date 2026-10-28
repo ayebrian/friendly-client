@@ -9,14 +9,14 @@ import {
   waitFor,
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { renderApp as render } from './render-app.test-utils';
+import { renderApp as render, apiPath } from './render-app.test-utils';
 import { App } from './App';
 import { Markdown } from '../shared/markdown';
 import { RuntimeContext } from '../shared/runtime';
 import { createFixtureGateway } from './fixture-gateway.test-utils';
 
 const NativeURL = URL;
-const auth = { id: 1, token: 'test-token', accessHash: 'test-hash' };
+const auth = { id: 1, accessHash: 'test-hash' };
 const image = () => new File(['image'], 'photo.png', { type: 'image/png' });
 const video = () => new File(['video'], 'clip.mp4', { type: 'video/mp4' });
 const audio = () => new File(['audio'], 'voice.wav', { type: 'audio/wav' });
@@ -35,6 +35,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   sessionStorage.clear();
+  localStorage.clear();
   history.replaceState(null, '', '/');
   vi.unstubAllGlobals();
 });
@@ -46,13 +47,13 @@ function live({
   upload?: (file: File, options: RequestInit, index: number) => Response | Promise<Response>;
   publish?: (text: string, index: number) => Response | Promise<Response>;
 } = {}) {
-  sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+  localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
   history.replaceState(null, '', '/community');
   let uploadCount = 0;
   let publishCount = 0;
   let text = '';
   const fetcher = vi.fn<typeof fetch>(async (url, options = {}) => {
-    const path = new URL(String(url)).pathname;
+    const path = apiPath(url);
     if (path === '/activity/list') return json({ data: [], nextId: null });
     if (path === '/auth/logout') return json({});
     if (path === '/feed/queue') return json({ entries: [] });
@@ -90,9 +91,9 @@ function live({
   return fetcher;
 }
 const uploads = (fetcher: ReturnType<typeof live>) =>
-  fetcher.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/files/upload');
+  fetcher.mock.calls.filter(([url]) => apiPath(url) === '/files/upload');
 const publications = (fetcher: ReturnType<typeof live>) =>
-  fetcher.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/community');
+  fetcher.mock.calls.filter(([url]) => apiPath(url) === '/community');
 
 function transfer(files: File[], items = true) {
   return {
@@ -300,7 +301,7 @@ describe('media composing and publishing', () => {
     await user.upload(await screen.findByLabelText('Choose media files'), image());
     await user.click(screen.getByRole('button', { name: 'Post' }));
     await screen.findByText('Your session has ended. Please sign in again.');
-    expect(sessionStorage.getItem('friendly.session.v1')).toBeNull();
+    expect(localStorage.getItem('friendly.session.v2')).toBeNull();
     expect(publications(fetcher)).toHaveLength(0);
   });
 

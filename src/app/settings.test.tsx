@@ -2,12 +2,13 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { renderApp } from './render-app.test-utils';
+import { renderApp, apiPath } from './render-app.test-utils';
 import { App } from './App';
 
 afterEach(() => {
   cleanup();
   sessionStorage.clear();
+  localStorage.clear();
   history.replaceState(null, '', '/');
   vi.unstubAllGlobals();
 });
@@ -15,17 +16,14 @@ afterEach(() => {
 it.each(['1234-5678', '1234 5678'])(
   'confirms a pasted code %s and preserves it for retry after an error',
   async (clipboard) => {
-    sessionStorage.setItem(
-      'friendly.session.v1',
-      JSON.stringify({ id: 1, token: 'test-token', accessHash: 'test-hash' }),
-    );
+    localStorage.setItem('friendly.session.v2', JSON.stringify({ id: 1, accessHash: 'test-hash' }));
     history.replaceState(null, '', '/settings');
     const confirmations: unknown[] = [];
     let email: string | null = null;
     vi.stubGlobal(
       'fetch',
       vi.fn<typeof fetch>(async (url, options) => {
-        const path = new URL(String(url)).pathname;
+        const path = apiPath(url);
         if (path === '/activity/list') return Response.json({ data: [], nextId: null });
         if (path === '/users/details2')
           return Response.json({

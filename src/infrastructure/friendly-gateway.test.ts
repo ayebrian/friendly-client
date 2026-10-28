@@ -3,23 +3,41 @@ import { createHttp } from './http';
 import { createFriendlyGateway } from './friendly-gateway';
 import activityList from './fixtures/activity-list.json?raw';
 
-const authorization = { id: 42, token: 'test-token', accessHash: 'test-hash' };
+const userId = 42;
 const json = (data: unknown) => new Response(JSON.stringify(data));
 /** `/activity/list` page in the shape of the Friendly backend's ActivityDetailsSerializable. */
 const activityFixture = () => activityList;
 
 describe('HTTP and protocol boundary', () => {
-  it('sets authorization headers and escapes opaque cursor segments', async () => {
+  it('names the account for the proxy, sends no token and escapes opaque cursor segments', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(json({ data: [], nextId: null }));
-    await createFriendlyGateway({
-      baseUrl: 'https://example.test/',
-      authorization,
-      fetcher,
-    }).activityPage('a/b+c');
-    expect(fetcher.mock.calls[0][0]).toBe('https://example.test/activity/list/a%2Fb%2Bc');
-    const headers = fetcher.mock.calls[0][1]!.headers as Headers;
-    expect(headers.get('X-Token')).toBe('test-token');
+    await createFriendlyGateway({ baseUrl: '/api/', userId, fetcher }).activityPage('a/b+c');
+    expect(fetcher.mock.calls[0][0]).toBe('/api/activity/list/a%2Fb%2Bc');
+    const options = fetcher.mock.calls[0][1]!;
+    const headers = options.headers as Headers;
+    expect(headers.get('X-Token')).toBeNull();
     expect(headers.get('X-User-Id')).toBe('42');
+    expect(options.credentials).toBe('same-origin');
+  });
+  it('keeps the token of a sign-in response out of the returned account', async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(json({ id: 42, accessHash: 'test-hash', token: 'unexpected' }));
+    const account = await createFriendlyGateway({ baseUrl: '/api', fetcher }).login(
+      'test@example.test',
+      '12345678',
+    );
+    expect(account).toEqual({ id: 42, accessHash: 'test-hash' });
+    expect((fetcher.mock.calls[0][1]!.headers as Headers).get('X-User-Id')).toBeNull();
+  });
+  it('builds media URLs on the public API, not on the proxy', () => {
+    const gateway = createFriendlyGateway({
+      baseUrl: '/api',
+      mediaBaseUrl: 'https://api.example.test/',
+    });
+    expect(gateway.fileUrl({ id: 3, accessHash: 'a/b' })).toBe(
+      'https://api.example.test/files/download/3/a%2Fb',
+    );
   });
   it('expires authenticated sessions on 401 only', async () => {
     const onUnauthorized = vi.fn();
@@ -29,7 +47,7 @@ describe('HTTP and protocol boundary', () => {
     ).rejects.toMatchObject({ status: 401 });
     expect(onUnauthorized).not.toHaveBeenCalled();
     await expect(
-      createHttp({ baseUrl: '', authorization, fetcher, onUnauthorized })('/activity/list'),
+      createHttp({ baseUrl: '', userId, fetcher, onUnauthorized })('/activity/list'),
     ).rejects.toMatchObject({ status: 401 });
     expect(onUnauthorized).toHaveBeenCalledOnce();
   });
@@ -37,9 +55,7 @@ describe('HTTP and protocol boundary', () => {
     const onUnauthorized = vi.fn();
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 403 }));
     await expect(
-      createFriendlyGateway({ baseUrl: '', authorization, fetcher, onUnauthorized }).invitation(
-        false,
-      ),
+      createFriendlyGateway({ baseUrl: '', userId, fetcher, onUnauthorized }).invitation(false),
     ).rejects.toMatchObject({
       status: 403,
       message: 'You do not have permission to perform this action.',
@@ -58,23 +74,19 @@ describe('HTTP and protocol boundary', () => {
   it('handles an empty mutation response', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 204 }));
     await expect(
-      createFriendlyGateway({ baseUrl: '', authorization, fetcher }).readActivity(2),
+      createFriendlyGateway({ baseUrl: '', userId, fetcher }).readActivity(2),
     ).resolves.toBeUndefined();
   });
-  it('revokes the authenticated token with the backend logout route', async () => {
+  it('revokes the session through the proxy logout route', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(json({}));
-    await createFriendlyGateway({
-      baseUrl: 'https://example.test',
-      authorization,
-      fetcher,
-    }).logout();
+    await createFriendlyGateway({ baseUrl: '/api', userId, fetcher }).logout();
     expect(fetcher).toHaveBeenCalledOnce();
     const [url, options] = fetcher.mock.calls[0];
-    expect(url).toBe('https://example.test/auth/logout');
+    expect(url).toBe('/api/auth/logout');
     expect(options?.method).toBe('POST');
     expect(options?.keepalive).toBe(true);
-    expect((options?.headers as Headers).get('X-Token')).toBe(authorization.token);
-    expect((options?.headers as Headers).get('X-User-Id')).toBe(String(authorization.id));
+    expect((options?.headers as Headers).get('X-Token')).toBeNull();
+    expect((options?.headers as Headers).get('X-User-Id')).toBe(String(userId));
   });
   it('keeps unknown event types visible without requiring a reply payload', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
@@ -213,7 +225,7 @@ describe('HTTP and protocol boundary', () => {
     const fetcher = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(null))
-      .mockResolvedValueOnce(json(authorization));
+      .mockResolvedValueOnce(json({ id: userId, accessHash: 'test-hash' }));
     const api = createFriendlyGateway({ baseUrl: '', fetcher });
     await api.sendLoginCode('test@example.test');
     await api.login('test@example.test', '00123456');

@@ -15,6 +15,13 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** Backend path of a request the app sent through the same-origin `/api` proxy. */
+export function apiPath(url: unknown) {
+  const path = new URL(String(url), location.origin).pathname;
+  if (!path.startsWith('/api/')) throw new Error(`Request bypassed the API proxy: ${String(url)}`);
+  return path.slice('/api'.length);
+}
+
 export function renderApp(element: ReactNode) {
   const router = createBrowserRouter([{ path: '*', element }]);
   routers.add(router);
@@ -27,9 +34,9 @@ export function renderApp(element: ReactNode) {
 
 export function renderFixtureApp(element: ReactNode) {
   const fixture = createFixtureGateway();
-  sessionStorage.setItem(
-    'friendly.session.v1',
-    JSON.stringify({ id: 1, token: 'fixture-token', accessHash: 'fixture-hash' }),
+  localStorage.setItem(
+    'friendly.session.v2',
+    JSON.stringify({ id: 1, accessHash: 'fixture-hash' }),
   );
   vi.spyOn(gatewayModule, 'createFriendlyGateway').mockReturnValue(fixture.gateway);
   if (location.pathname === '/') history.replaceState(null, '', '/activity');

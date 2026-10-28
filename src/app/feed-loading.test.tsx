@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { renderApp as render } from './render-app.test-utils';
+import { renderApp as render, apiPath } from './render-app.test-utils';
 import { App } from './App';
 
 const post = (id: number, text: string) => ({
@@ -24,18 +24,16 @@ function deferred<T>() {
 afterEach(() => {
   cleanup();
   sessionStorage.clear();
+  localStorage.clear();
   history.replaceState(null, '', '/');
   vi.unstubAllGlobals();
 });
 
 function openFeed(list: (path: string) => Response | Promise<Response>) {
-  sessionStorage.setItem(
-    'friendly.session.v1',
-    JSON.stringify({ id: 1, token: 'test-token', accessHash: 'test-hash' }),
-  );
+  localStorage.setItem('friendly.session.v2', JSON.stringify({ id: 1, accessHash: 'test-hash' }));
   history.replaceState(null, '', '/community');
   const fetcher = vi.fn<typeof fetch>(async (url) => {
-    const path = new URL(String(url)).pathname;
+    const path = apiPath(url);
     if (path === '/activity/list') return json({ data: [], nextId: null });
     if (path.startsWith('/community/list')) return list(path);
     if (path === '/community') return json({ id: 20, accessHash: 'hash-20' });

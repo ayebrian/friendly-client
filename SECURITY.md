@@ -14,8 +14,9 @@ observed. Only test against your own account and your own deployment.
 
 ## Scope
 
-In scope: this client (`src/`), its production headers (`scripts/security-headers.ts`)
-and the image proxy Worker (`workers/image-proxy`).
+In scope: this client (`src/`), its production headers (`scripts/security-headers.ts`),
+the same-origin API proxy that holds the session cookie (`bff/`, deployed as the Pages
+Function `functions/api/[[path]].ts`) and the image proxy Worker (`workers/image-proxy`).
 
 Out of scope: the Friendly API itself (`api.getfriend.ly`), Firebase, Cloudflare,
 and third-party dependencies without a demonstrated impact on this client.
