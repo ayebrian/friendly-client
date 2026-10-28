@@ -1,6 +1,9 @@
+/**
+ * The signed-in account as the page knows it. The API token stays in an HttpOnly cookie
+ * held by the same-origin proxy (bff/proxy.ts) and never reaches page scripts.
+ */
 export interface Authorization {
   id: number;
-  token: string;
   accessHash: string;
 }
 

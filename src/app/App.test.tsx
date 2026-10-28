@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, screen, waitFor } from '@testing-library/react';
-import { renderFixtureApp, renderApp as render } from './render-app.test-utils';
+import { renderFixtureApp, renderApp as render, apiPath } from './render-app.test-utils';
 import userEvent from '@testing-library/user-event';
 import { App } from './App';
 import { StrictMode } from 'react';
@@ -24,6 +24,7 @@ beforeAll(() => {
 afterEach(() => {
   cleanup();
   sessionStorage.clear();
+  localStorage.clear();
   history.replaceState(null, '', '/');
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -43,15 +44,15 @@ const event = {
     instant: '2026-09-30T12:00:00Z',
   },
 };
-const auth = { id: 1, token: 'test-token', accessHash: 'test-hash' };
+const auth = { id: 1, accessHash: 'test-hash' };
 
 describe('session and notification integration', () => {
   it('revokes the server token before clearing the local session on sign out', async () => {
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
     history.replaceState(null, '', '/activity');
     let finishLogout: ((response: Response) => void) | undefined;
     const fetcher = vi.fn<typeof fetch>(async (url) => {
-      const path = new URL(String(url)).pathname;
+      const path = apiPath(url);
       if (path === '/activity/list')
         return new Response(JSON.stringify({ data: [], nextId: null }));
       if (path === '/auth/logout')
@@ -67,29 +68,30 @@ describe('session and notification integration', () => {
     await user.click(screen.getByRole('button', { name: 'Account menu' }));
     await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
     await waitFor(() => expect(finishLogout).toBeDefined());
-    expect(JSON.parse(sessionStorage.getItem('friendly.session.v1')!)).toEqual({
+    expect(JSON.parse(localStorage.getItem('friendly.session.v2')!)).toEqual({
       pendingLogout: auth,
     });
     expect(screen.getByRole('heading', { name: 'Signing out…' })).toBeTruthy();
     expect(screen.queryByRole('navigation')).toBeNull();
     await act(async () => finishLogout!(new Response('{}')));
     await screen.findByRole('heading', { name: 'Sign in to Friendly' });
-    expect(sessionStorage.getItem('friendly.session.v1')).toBeNull();
+    expect(localStorage.getItem('friendly.session.v2')).toBeNull();
     const request = fetcher.mock.calls.find(([url]) => String(url).endsWith('/auth/logout'))!;
     expect(request[1]?.method).toBe('POST');
-    expect((request[1]?.headers as Headers).get('X-Token')).toBe(auth.token);
+    expect(String(request[0])).toBe('/api/auth/logout');
+    expect((request[1]?.headers as Headers).get('X-Token')).toBeNull();
     expect((request[1]?.headers as Headers).get('X-User-Id')).toBe(String(auth.id));
   });
 
   it('aborts account requests as soon as sign out starts, while revocation is pending', async () => {
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
     history.replaceState(null, '', '/activity');
     let activitySignal: AbortSignal | undefined;
     let finishLogout: ((response: Response) => void) | undefined;
     vi.stubGlobal(
       'fetch',
       vi.fn<typeof fetch>(async (url, options) => {
-        const path = new URL(String(url)).pathname;
+        const path = apiPath(url);
         if (path === '/activity/list') {
           activitySignal = options?.signal as AbortSignal;
           return new Promise<Response>(() => {});
@@ -110,18 +112,18 @@ describe('session and notification integration', () => {
     expect(activitySignal!.aborted).toBe(true);
     expect(screen.getByRole('heading', { name: 'Signing out…' })).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'New post' })).toBeNull();
-    expect(sessionStorage.getItem('friendly.session.v1')).not.toBeNull();
+    expect(localStorage.getItem('friendly.session.v2')).not.toBeNull();
     await act(async () => finishLogout!(new Response('{}')));
     await screen.findByRole('heading', { name: 'Sign in to Friendly' });
   });
 
   it('resumes a pending server sign out after a same-tab reload', async () => {
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
     history.replaceState(null, '', '/activity');
     let revokeCount = 0;
     let finishFirst: ((response: Response) => void) | undefined;
     const fetcher = vi.fn<typeof fetch>(async (url) => {
-      const path = new URL(String(url)).pathname;
+      const path = apiPath(url);
       if (path === '/activity/list')
         return new Response(JSON.stringify({ data: [], nextId: null }));
       if (path === '/auth/logout') {
@@ -141,7 +143,7 @@ describe('session and notification integration', () => {
     await user.click(screen.getByRole('button', { name: 'Account menu' }));
     await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
     await waitFor(() => expect(finishFirst).toBeDefined());
-    expect(JSON.parse(sessionStorage.getItem('friendly.session.v1')!)).toEqual({
+    expect(JSON.parse(localStorage.getItem('friendly.session.v2')!)).toEqual({
       pendingLogout: auth,
     });
     first.unmount();
@@ -151,24 +153,24 @@ describe('session and notification integration', () => {
     expect(screen.queryByRole('navigation')).toBeNull();
     await screen.findByRole('heading', { name: 'Sign in to Friendly' });
     expect(revokeCount).toBe(2);
-    expect(sessionStorage.getItem('friendly.session.v1')).toBeNull();
+    expect(localStorage.getItem('friendly.session.v2')).toBeNull();
     for (const [, options] of fetcher.mock.calls.filter(([url]) =>
       String(url).endsWith('/auth/logout'),
     )) {
-      expect((options?.headers as Headers).get('X-Token')).toBe(auth.token);
+      expect((options?.headers as Headers).get('X-User-Id')).toBe(String(auth.id));
     }
     await act(async () => finishFirst!(new Response('{}')));
     expect(screen.getByRole('heading', { name: 'Sign in to Friendly' })).toBeTruthy();
   });
 
   it('does not let an old pending revoke clear a later account', async () => {
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
     history.replaceState(null, '', '/activity');
     let finishLogout: ((response: Response) => void) | undefined;
     vi.stubGlobal(
       'fetch',
       vi.fn<typeof fetch>(async (url) => {
-        const path = new URL(String(url)).pathname;
+        const path = apiPath(url);
         if (path === '/activity/list')
           return new Response(JSON.stringify({ data: [], nextId: null }));
         if (path === '/auth/logout')
@@ -185,23 +187,23 @@ describe('session and notification integration', () => {
     await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
     await waitFor(() => expect(finishLogout).toBeDefined());
     first.unmount();
-    const nextAuth = { id: 2, token: 'next-token', accessHash: 'next-hash' };
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(nextAuth));
+    const nextAuth = { id: 2, accessHash: 'next-hash' };
+    localStorage.setItem('friendly.session.v2', JSON.stringify(nextAuth));
     render(<App />);
     await screen.findByRole('heading', { name: 'Notifications' });
     await act(async () => finishLogout!(new Response('{}')));
-    expect(JSON.parse(sessionStorage.getItem('friendly.session.v1')!)).toEqual(nextAuth);
+    expect(JSON.parse(localStorage.getItem('friendly.session.v2')!)).toEqual(nextAuth);
     expect(screen.getByRole('heading', { name: 'Notifications' })).toBeTruthy();
   });
 
   it('keeps the session available after a failed revoke, then retries sign out', async () => {
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
     history.replaceState(null, '', '/activity');
     let attempts = 0;
     vi.stubGlobal(
       'fetch',
       vi.fn<typeof fetch>(async (url) => {
-        const path = new URL(String(url)).pathname;
+        const path = apiPath(url);
         if (path === '/activity/list')
           return new Response(JSON.stringify({ data: [], nextId: null }));
         if (path === '/auth/logout') {
@@ -217,22 +219,22 @@ describe('session and notification integration', () => {
     await user.click(screen.getByRole('button', { name: 'Account menu' }));
     await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
     await screen.findByText(/Could not confirm sign-out. This account is still open in this tab./);
-    expect(JSON.parse(sessionStorage.getItem('friendly.session.v1')!)).toEqual(auth);
+    expect(JSON.parse(localStorage.getItem('friendly.session.v2')!)).toEqual(auth);
     expect(screen.getByRole('heading', { name: 'Notifications' })).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Account menu' }));
     await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
     await screen.findByRole('heading', { name: 'Sign in to Friendly' });
     expect(attempts).toBe(2);
-    expect(sessionStorage.getItem('friendly.session.v1')).toBeNull();
+    expect(localStorage.getItem('friendly.session.v2')).toBeNull();
   });
 
   it('clears the local session when the revoke endpoint reports an already invalid token', async () => {
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
     history.replaceState(null, '', '/activity');
     vi.stubGlobal(
       'fetch',
       vi.fn<typeof fetch>(async (url) => {
-        const path = new URL(String(url)).pathname;
+        const path = apiPath(url);
         if (path === '/activity/list')
           return new Response(JSON.stringify({ data: [], nextId: null }));
         if (path === '/auth/logout') return new Response(null, { status: 401 });
@@ -245,7 +247,7 @@ describe('session and notification integration', () => {
     await user.click(screen.getByRole('button', { name: 'Account menu' }));
     await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
     await screen.findByRole('heading', { name: 'Sign in to Friendly' });
-    expect(sessionStorage.getItem('friendly.session.v1')).toBeNull();
+    expect(localStorage.getItem('friendly.session.v2')).toBeNull();
     expect(screen.queryByText('Your session has ended. Please sign in again.')).toBeNull();
   });
 
@@ -257,7 +259,7 @@ describe('session and notification integration', () => {
       vi.stubGlobal(
         'fetch',
         vi.fn<typeof fetch>(async (url, options) => {
-          const path = new URL(String(url)).pathname;
+          const path = apiPath(url);
           const delayed = stage === 'code' ? '/auth/email' : '/auth/login';
           if (path === delayed) {
             requestSignal = options?.signal as AbortSignal;
@@ -289,18 +291,18 @@ describe('session and notification integration', () => {
       await act(async () => finish!(new Response(JSON.stringify(auth))));
       expect(location.pathname).toBe('/signup');
       expect((name as HTMLInputElement).value).toBe('Registration in progress');
-      expect(sessionStorage.getItem('friendly.session.v1')).toBeNull();
+      expect(localStorage.getItem('friendly.session.v2')).toBeNull();
       expect(screen.queryByRole('navigation')).toBeNull();
     },
   );
 
   it('renders replies, followed-thread replies and friend requests from the backend', async () => {
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
     history.replaceState(null, '', '/activity');
     vi.stubGlobal(
       'fetch',
       vi.fn<typeof fetch>(async (url) => {
-        if (new URL(String(url)).pathname === '/activity/list') return new Response(activity);
+        if (apiPath(url) === '/activity/list') return new Response(activity);
         throw new Error('unexpected endpoint');
       }),
     );
@@ -340,12 +342,12 @@ describe('session and notification integration', () => {
       from: { ...anna, friendship: accepted ? 'friends' : 'incomingRequest' },
       isMutual: false,
     });
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
     history.replaceState(null, '', '/activity');
     vi.stubGlobal(
       'fetch',
       vi.fn<typeof fetch>(async (url, options) => {
-        const path = new URL(String(url)).pathname;
+        const path = apiPath(url);
         if (path === '/activity/list')
           return new Response(JSON.stringify({ data: [request()], nextId: null }));
         if (path === '/users/details2/31/anna-hash')
@@ -367,7 +369,7 @@ describe('session and notification integration', () => {
   it('polls activity on a different page without enabling push', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     let events = [event];
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
     history.replaceState(null, '', '/profile');
     vi.stubGlobal(
       'fetch',
@@ -394,7 +396,7 @@ describe('session and notification integration', () => {
     await screen.findByText('New reply');
   });
   it('restores unread status and badge after a failed read', async () => {
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
     const fetcher = vi.fn<typeof fetch>(async (url) => {
       if (String(url).includes('/activity/read/')) return new Response(null, { status: 500 });
       if (String(url).endsWith('/activity/list'))
@@ -417,7 +419,7 @@ describe('session and notification integration', () => {
   });
 
   it('expires session and removes account cache on authenticated 401', async () => {
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
     vi.stubGlobal(
       'fetch',
       vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 401 })),
@@ -429,7 +431,7 @@ describe('session and notification integration', () => {
       </StrictMode>,
     );
     await screen.findByRole('heading', { name: 'Sign in to Friendly' });
-    expect(sessionStorage.getItem('friendly.session.v1')).toBeNull();
+    expect(localStorage.getItem('friendly.session.v2')).toBeNull();
     expect(screen.getByText('Your session has ended. Please sign in again.')).toBeTruthy();
     expect(screen.queryByRole('navigation')).toBeNull();
   });
@@ -455,7 +457,7 @@ describe('session and notification integration', () => {
     await user.type(await screen.findByLabelText(/Email code/), '12345678');
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
     await screen.findByText('Тестовый ответ');
-    expect(JSON.parse(sessionStorage.getItem('friendly.session.v1')!)).toEqual(auth);
+    expect(JSON.parse(localStorage.getItem('friendly.session.v2')!)).toEqual(auth);
   });
 });
 

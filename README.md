@@ -23,8 +23,19 @@ npm run dev
 
 Реальный вход использует почту, уже привязанную к аккаунту Friendly. Код — 8 цифр.
 Без аккаунта реальная авторизация и содержимое уведомлений не проверены.
-Базовый URL по умолчанию https://api.getfriend.ly; переопределение через
-`VITE_API_BASE_URL` в `.env.local` (это публичная настройка, не место для секретов).
+Запросы к API идут через прокси того же origin `/api` (Cloudflare Pages Function),
+который хранит токен в HttpOnly cookie; клиент токен не видит. `npm run dev` и
+`vite preview` обслуживают `/api` тем же кодом. Upstream прокси —
+`FRIENDLY_API_ORIGIN` (по умолчанию https://api.getfriend.ly; при разработке —
+переменная окружения, на Pages — переменная проекта). Медиа загружаются напрямую из
+`VITE_API_BASE_URL` (по умолчанию тот же API; публичная настройка, не место для секретов).
+Cookie с `Secure` при разработке на http://localhost или http://127.0.0.1 принимают
+Chromium и Firefox, но не Safari. Проверить Function в runtime Cloudflare:
+
+```sh
+npm run build
+npx wrangler pages dev dist
+```
 
 ## Структура проекта
 
@@ -106,6 +117,14 @@ GitHub Actions запускает те же проверки на push в main �
 `check` включает тесты Worker в runtime Cloudflare; `proxy:build` проверяет
 типы и упаковку с `wrangler deploy --dry-run`, без публикации.
 
+## Публикация на Cloudflare Pages
+
+Pages собирает `npm run build` с выходным каталогом `dist` и сам публикует каталог
+`functions/` вместе со статикой: отдельного шага развёртывания нет. `public/_routes.json`
+запускает Functions только для `/api/*`. `FRIENDLY_API_ORIGIN` задавать не требуется,
+пока используется публичный API. Подробности и ограничения прокси —
+в [docs/architecture.md](docs/architecture.md#прокси-api-bff).
+
 ## Заголовки production
 
 Сборка создаёт `dist/_headers` для Cloudflare Pages: CSP, запрет iframe,
@@ -118,8 +137,9 @@ CSP разрешает скрипты с собственного origin и ра
 хешу финального HTML. `unsafe-inline` и `unsafe-eval` для скриптов не разрешены;
 оптимизация JIT в Zod отключена до создания схем. Для стилей разрешён inline,
 поскольку Radix создаёт стили блокировки прокрутки, а React использует style-атрибуты.
-Сетевые API ограничены настроенным Friendly API и двумя endpoint Firebase push.
-Хеш и origin API пересчитываются при каждой сборке; HTML и `_headers` нужно
+`connect-src` разрешает только свой origin (прокси `/api`) и два endpoint Firebase push;
+настроенный API разрешён лишь для картинок и медиа. Хеш и origin API пересчитываются при
+каждой сборке; HTML и `_headers` нужно
 публиковать из одной сборки.
 
 Схема модулей и решения: [docs/architecture.md](docs/architecture.md).

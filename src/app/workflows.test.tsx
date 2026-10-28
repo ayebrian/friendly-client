@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { renderFixtureApp, renderApp as render } from './render-app.test-utils';
+import { renderFixtureApp, renderApp as render, apiPath } from './render-app.test-utils';
 import userEvent from '@testing-library/user-event';
 import { App } from './App';
 
@@ -22,6 +22,7 @@ beforeAll(() => {
 afterEach(() => {
   cleanup();
   sessionStorage.clear();
+  localStorage.clear();
   history.replaceState(null, '', '/');
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -41,7 +42,7 @@ const event = {
     instant: '2026-09-30T12:00:00Z',
   },
 };
-const auth = { id: 1, token: 'test-token', accessHash: 'test-hash' };
+const auth = { id: 1, accessHash: 'test-hash' };
 
 describe('feed, drafts and form recovery', () => {
   it('blocks browser Back, keeps the draft on cancellation and only discards with confirmation', async () => {
@@ -147,12 +148,12 @@ describe('feed, drafts and form recovery', () => {
   });
 
   it('preserves an inline publication after a failed request and refreshes the feed on retry', async () => {
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
     history.replaceState(null, '', '/community');
     let text = '';
     let fail = true;
     const fetcher = vi.fn<typeof fetch>(async (url, options) => {
-      const path = new URL(String(url)).pathname;
+      const path = apiPath(url);
       if (path === '/activity/list')
         return new Response(JSON.stringify({ data: [], nextId: null }));
       if (path === '/community/list')
@@ -190,13 +191,13 @@ describe('feed, drafts and form recovery', () => {
   });
 
   it('cancels an inline publication when leaving the feed', async () => {
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
     history.replaceState(null, '', '/community');
     let publicationSignal: AbortSignal | undefined;
     vi.stubGlobal(
       'fetch',
       vi.fn<typeof fetch>(async (url, options) => {
-        const path = new URL(String(url)).pathname;
+        const path = apiPath(url);
         if (path === '/activity/list' || path === '/community/list')
           return new Response(JSON.stringify({ data: [], nextId: null }));
         if (path === '/feed/queue') return new Response(JSON.stringify({ entries: [] }));
@@ -301,13 +302,13 @@ describe('feed, drafts and form recovery', () => {
 
 describe('pending thread operations', () => {
   it('keeps reply targets disabled during submission and restores the draft after failure', async () => {
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
     history.replaceState(null, '', '/post/10/hash');
     let finish: ((response: Response) => void) | undefined;
     vi.stubGlobal(
       'fetch',
       vi.fn<typeof fetch>(async (url) => {
-        const path = new URL(String(url)).pathname;
+        const path = apiPath(url);
         if (path === '/activity/list')
           return new Response(JSON.stringify({ data: [], nextId: null }));
         if (path === '/community/2/10/hash')

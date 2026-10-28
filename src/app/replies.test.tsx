@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { renderApp as render } from './render-app.test-utils';
+import { renderApp as render, apiPath } from './render-app.test-utils';
 import { App } from './App';
 
 const author = { id: 2, nickname: 'Same author', description: '', interests: [] };
@@ -21,6 +21,7 @@ const last = post(13, 'Yes, the cafe!');
 afterEach(() => {
   cleanup();
   sessionStorage.clear();
+  localStorage.clear();
   history.replaceState(null, '', '/');
   vi.unstubAllGlobals();
 });
@@ -30,13 +31,10 @@ function openThread({
   replies = [] as object[],
   nextId = null as string | null,
 } = {}) {
-  sessionStorage.setItem(
-    'friendly.session.v1',
-    JSON.stringify({ id: 1, token: 'test-token', accessHash: 'test-hash' }),
-  );
+  localStorage.setItem('friendly.session.v2', JSON.stringify({ id: 1, accessHash: 'test-hash' }));
   history.replaceState(null, '', '/post/10/hash-10');
   const fetcher = vi.fn<typeof fetch>(async (url) => {
-    const path = new URL(String(url)).pathname;
+    const path = apiPath(url);
     let data: unknown;
     if (path === '/activity/list') data = { data: [], nextId: null };
     else if (path === '/community/2/10/hash-10')
@@ -134,14 +132,12 @@ describe('reply context', () => {
     await waitFor(() =>
       expect(
         fetcher.mock.calls.some(
-          ([url, options]) =>
-            new URL(String(url)).pathname === '/community' && options?.method === 'POST',
+          ([url, options]) => apiPath(url) === '/community' && options?.method === 'POST',
         ),
       ).toBe(true),
     );
     const options = fetcher.mock.calls.find(
-      ([url, options]) =>
-        new URL(String(url)).pathname === '/community' && options?.method === 'POST',
+      ([url, options]) => apiPath(url) === '/community' && options?.method === 'POST',
     )![1]!;
     expect(JSON.parse(String(options.body))).toMatchObject({
       text: 'Meet at six.',

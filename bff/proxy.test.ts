@@ -1,0 +1,401 @@
+import { describe, expect, it, vi } from 'vitest';
+import { handleApiRequest, readSession, SESSION_COOKIE } from './proxy';
+import { onRequest } from '../functions/api/[[path]]';
+
+const origin = 'https://friendly.example';
+const api = 'https://api.example';
+const env = { FRIENDLY_API_ORIGIN: api };
+const account = { id: 42, accessHash: 'account-hash' };
+const secret = 'test-secret-token';
+
+function cookieFor(id: number, token: string) {
+  const value = btoa(JSON.stringify({ id, token }))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+  return `${SESSION_COOKIE}=${value}`;
+}
+const signedIn = { Cookie: `theme=dark; ${cookieFor(42, secret)}` };
+
+function request(path: string, init: RequestInit & { headers?: Record<string, string> } = {}) {
+  const method = init.method ?? 'GET';
+  const headers = { ...(method === 'GET' || method === 'HEAD' ? {} : { Origin: origin }) };
+  return new Request(`${origin}${path}`, {
+    ...init,
+    headers: { ...headers, ...init.headers },
+    ...(init.body ? { duplex: 'half' } : {}),
+  } as RequestInit);
+}
+
+function upstream(response: () => Response | Promise<Response>) {
+  return vi.fn<typeof fetch>(async () => response());
+}
+
+function sent(fetcher: ReturnType<typeof upstream>, index = 0) {
+  return fetcher.mock.calls[index][0] as Request;
+}
+
+const json = (body: unknown, init?: ResponseInit) => new Response(JSON.stringify(body), init);
+
+describe('sign-in', () => {
+  it.each(['/auth/login', '/auth/generate'])(
+    'moves the token from %s into an HttpOnly __Host- cookie',
+    async (path) => {
+      const fetcher = upstream(() => json({ ...account, token: secret }));
+      const response = await handleApiRequest(
+        request(`/api${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: 'test@example.test', code: 12345678 }),
+        }),
+        env,
+        { fetch: fetcher },
+      );
+      expect(response.status).toBe(200);
+      const text = await response.text();
+      expect(text).not.toContain(secret);
+      expect(JSON.parse(text)).toEqual(account);
+      const cookie = response.headers.get('Set-Cookie')!;
+      expect(cookie).toMatch(new RegExp(`^${SESSION_COOKIE}=[A-Za-z0-9_-]+;`));
+      expect(cookie).not.toContain(secret);
+      expect(cookie).toContain('HttpOnly');
+      expect(cookie).toContain('Secure');
+      expect(cookie).toContain('SameSite=Strict');
+      expect(cookie).toContain('Path=/');
+      expect(cookie).not.toMatch(/Domain=/i);
+      expect(readSession(cookie.split(';')[0])).toEqual({ id: 42, token: secret });
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+      const forwarded = sent(fetcher);
+      expect(forwarded.url).toBe(`${api}${path}`);
+      expect(forwarded.headers.get('X-Token')).toBeNull();
+      expect(await forwarded.json()).toEqual({ email: 'test@example.test', code: 12345678 });
+    },
+  );
+
+  it('passes a failed sign-in through without a cookie', async () => {
+    const fetcher = upstream(() => new Response(null, { status: 403 }));
+    const response = await handleApiRequest(
+      request('/api/auth/login', { method: 'POST', body: '{}' }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(response.status).toBe(403);
+    expect(response.headers.get('Set-Cookie')).toBeNull();
+  });
+
+  it('refuses a successful sign-in response without a token', async () => {
+    const fetcher = upstream(() => json(account));
+    const response = await handleApiRequest(
+      request('/api/auth/login', { method: 'POST', body: '{}' }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(response.status).toBe(502);
+    expect(response.headers.get('Set-Cookie')).toBeNull();
+  });
+});
+
+describe('authenticated proxying', () => {
+  it('adds the backend headers from the cookie and forwards only allowed headers', async () => {
+    const fetcher = upstream(() =>
+      json(
+        { ok: true },
+        {
+          status: 201,
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Set-Cookie': 'upstream=1',
+            'Access-Control-Allow-Origin': '*',
+            'Retry-After': '5',
+          },
+        },
+      ),
+    );
+    const response = await handleApiRequest(
+      request('/api/community/list/a%2Fb?x=1', {
+        headers: {
+          ...signedIn,
+          'X-User-Id': '42',
+          'X-Locale': 'ru',
+          'X-Compatible': 'true',
+          Authorization: 'Bearer leaked',
+          'X-Token': 'client-supplied',
+          'CF-Connecting-IP': '203.0.113.1',
+        },
+      }),
+      env,
+      { fetch: fetcher },
+    );
+    const forwarded = sent(fetcher);
+    expect(forwarded.url).toBe(`${api}/community/list/a%2Fb?x=1`);
+    expect(forwarded.headers.get('X-Token')).toBe(secret);
+    expect(forwarded.headers.get('X-User-Id')).toBe('42');
+    expect(forwarded.headers.get('X-Locale')).toBe('ru');
+    expect(forwarded.headers.get('X-Compatible')).toBe('true');
+    expect(forwarded.headers.get('Cookie')).toBeNull();
+    expect(forwarded.headers.get('Authorization')).toBeNull();
+    expect(forwarded.headers.get('CF-Connecting-IP')).toBeNull();
+    expect(forwarded.redirect).toBe('manual');
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({ ok: true });
+    expect(response.headers.get('Content-Type')).toBe('application/json; charset=utf-8');
+    expect(response.headers.get('Retry-After')).toBe('5');
+    expect(response.headers.get('Set-Cookie')).toBeNull();
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+  });
+
+  it('streams multipart uploads with the file size header', async () => {
+    const fetcher = upstream(() => json({ id: 7, accessHash: 'file-hash' }));
+    const form = new FormData();
+    form.append('file', new Blob(['image-bytes'], { type: 'image/png' }), 'photo.png');
+    const body = new Request('https://form.example', { method: 'POST', body: form });
+    const response = await handleApiRequest(
+      request('/api/files/upload', {
+        method: 'POST',
+        headers: {
+          ...signedIn,
+          'X-User-Id': '42',
+          'X-File-Size': '11',
+          'Content-Type': body.headers.get('Content-Type')!,
+        },
+        body: body.body,
+      }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(response.status).toBe(200);
+    const forwarded = sent(fetcher);
+    expect(forwarded.method).toBe('POST');
+    expect(forwarded.headers.get('X-File-Size')).toBe('11');
+    const received = await forwarded.formData();
+    expect(await (received.get('file') as File).text()).toBe('image-bytes');
+  });
+
+  it('never attaches the token unless the client names the signed-in account', async () => {
+    const fetcher = upstream(() => new Response(null, { status: 401 }));
+    const response = await handleApiRequest(
+      request('/api/users/details2', { headers: signedIn }),
+      env,
+      {
+        fetch: fetcher,
+      },
+    );
+    expect(sent(fetcher).headers.get('X-Token')).toBeNull();
+    expect(response.status).toBe(401);
+    // An anonymous 401 must not end the session that the page did not use.
+    expect(response.headers.get('Set-Cookie')).toBeNull();
+  });
+
+  it('answers 401 without calling the backend when there is no session cookie', async () => {
+    const fetcher = upstream(() => json({}));
+    const response = await handleApiRequest(
+      request('/api/activity/list', {
+        headers: { 'X-User-Id': '42', Cookie: `${SESSION_COOKIE}=%%%` },
+      }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(response.status).toBe(401);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('answers 409 when the cookie belongs to a different account', async () => {
+    const fetcher = upstream(() => json({}));
+    const response = await handleApiRequest(
+      request('/api/activity/list', { headers: { ...signedIn, 'X-User-Id': '7' } }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(response.status).toBe(409);
+    expect(response.headers.get('X-Friendly-Session')).toBe('changed');
+    expect(response.headers.get('Set-Cookie')).toBeNull();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('clears the cookie when the backend rejects the token', async () => {
+    const fetcher = upstream(() => new Response(null, { status: 401 }));
+    const response = await handleApiRequest(
+      request('/api/activity/list', { headers: { ...signedIn, 'X-User-Id': '42' } }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(response.status).toBe(401);
+    expect(response.headers.get('Set-Cookie')).toMatch(
+      new RegExp(`^${SESSION_COOKIE}=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Strict$`),
+    );
+  });
+
+  it('reports an unreachable backend as 502', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new TypeError('network'));
+    const response = await handleApiRequest(request('/api/feed/queue'), env, { fetch: fetcher });
+    expect(response.status).toBe(502);
+  });
+
+  it('keeps every request on the configured API origin', async () => {
+    const fetcher = upstream(() => json({}));
+    await handleApiRequest(request('/api//evil.example/x'), env, { fetch: fetcher });
+    await handleApiRequest(request('/api/../../x'), env, { fetch: fetcher });
+    for (const [input] of fetcher.mock.calls)
+      expect(new URL((input as Request).url).origin).toBe(api);
+  });
+
+  it('defaults to the public Friendly API and rejects an insecure configuration', async () => {
+    const fetcher = upstream(() => json({}));
+    await handleApiRequest(request('/api/feed/queue'), {}, { fetch: fetcher });
+    expect(sent(fetcher).url).toBe('https://api.getfriend.ly/feed/queue');
+    const response = await handleApiRequest(
+      request('/api/feed/queue'),
+      { FRIENDLY_API_ORIGIN: 'http://api.example' },
+      { fetch: fetcher },
+    );
+    expect(response.status).toBe(500);
+  });
+
+  it('serves only paths below /api and known methods', async () => {
+    const fetcher = upstream(() => json({}));
+    expect((await handleApiRequest(request('/api'), env, { fetch: fetcher })).status).toBe(404);
+    expect((await handleApiRequest(request('/api/'), env, { fetch: fetcher })).status).toBe(404);
+    expect(
+      (await handleApiRequest(request('/api/_session/other'), env, { fetch: fetcher })).status,
+    ).toBe(404);
+    expect(
+      (
+        await handleApiRequest(request('/api/feed/queue', { method: 'OPTIONS' }), env, {
+          fetch: fetcher,
+        })
+      ).status,
+    ).toBe(405);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+});
+
+describe('sign-out', () => {
+  it('clears the cookie after the backend revokes the token', async () => {
+    const fetcher = upstream(() => json({}));
+    const response = await handleApiRequest(
+      request('/api/auth/logout', { method: 'POST', headers: { ...signedIn, 'X-User-Id': '42' } }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(sent(fetcher).url).toBe(`${api}/auth/logout`);
+    expect(sent(fetcher).headers.get('X-Token')).toBe(secret);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Set-Cookie')).toMatch(/Max-Age=0/);
+  });
+
+  it('keeps the cookie when the backend could not revoke the token', async () => {
+    const fetcher = upstream(() => new Response(null, { status: 500 }));
+    const response = await handleApiRequest(
+      request('/api/auth/logout', { method: 'POST', headers: { ...signedIn, 'X-User-Id': '42' } }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(response.status).toBe(500);
+    expect(response.headers.get('Set-Cookie')).toBeNull();
+  });
+});
+
+describe('cross-site requests', () => {
+  it.each([
+    ['without Origin', {}],
+    ['from another origin', { Origin: 'https://attacker.example' }],
+    ['from a lookalike origin', { Origin: `${origin}.attacker.example` }],
+    ['from a null origin', { Origin: 'null' }],
+  ])('rejects a state-changing request %s', async (_label, headers) => {
+    const fetcher = upstream(() => json({}));
+    for (const path of ['/api/community', '/api/auth/login', '/api/_session/migrate']) {
+      const response = await handleApiRequest(
+        new Request(`${origin}${path}`, {
+          method: 'POST',
+          headers: { ...signedIn, 'X-User-Id': '42', ...headers },
+          body: '{}',
+        }),
+        env,
+        { fetch: fetcher },
+      );
+      expect(response.status).toBe(403);
+      expect(response.headers.get('Set-Cookie')).toBeNull();
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+});
+
+describe('migration of a token from an earlier build', () => {
+  it('checks the token with the backend, then stores it only in the cookie', async () => {
+    const fetcher = upstream(() => json({ user: { ...account, nickname: 'Test' } }));
+    const response = await handleApiRequest(
+      request('/api/_session/migrate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: 42, token: secret }),
+      }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(sent(fetcher).url).toBe(`${api}/users/details2`);
+    expect(sent(fetcher).headers.get('X-Token')).toBe(secret);
+    expect(sent(fetcher).headers.get('X-User-Id')).toBe('42');
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).not.toContain(secret);
+    expect(JSON.parse(text)).toEqual(account);
+    expect(readSession(response.headers.get('Set-Cookie')!.split(';')[0])).toEqual({
+      id: 42,
+      token: secret,
+    });
+  });
+
+  it('does not store a token that the backend rejects', async () => {
+    const fetcher = upstream(() => new Response(null, { status: 401 }));
+    const response = await handleApiRequest(
+      request('/api/_session/migrate', {
+        method: 'POST',
+        body: JSON.stringify({ id: 42, token: 'x' }),
+      }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(response.status).toBe(401);
+    expect(response.headers.get('Set-Cookie')).toBeNull();
+  });
+
+  it('does not store a token that belongs to another account', async () => {
+    const fetcher = upstream(() => json({ user: { id: 7, accessHash: 'other' } }));
+    const response = await handleApiRequest(
+      request('/api/_session/migrate', {
+        method: 'POST',
+        body: JSON.stringify({ id: 42, token: 'x' }),
+      }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(response.status).toBe(502);
+    expect(response.headers.get('Set-Cookie')).toBeNull();
+  });
+
+  it.each([
+    ['malformed JSON', '{'],
+    ['a missing token', JSON.stringify({ id: 42 })],
+    ['a fractional id', JSON.stringify({ id: 4.2, token: 'x' })],
+    ['an oversized body', JSON.stringify({ id: 42, token: 'x'.repeat(5000) })],
+  ])('rejects %s without calling the backend', async (_label, body) => {
+    const fetcher = upstream(() => json({}));
+    const response = await handleApiRequest(
+      request('/api/_session/migrate', { method: 'POST', body }),
+      env,
+      { fetch: fetcher },
+    );
+    expect([400, 413]).toContain(response.status);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+});
+
+describe('Pages Function entry', () => {
+  it('passes the environment to the proxy', async () => {
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({}));
+    await onRequest({ request: request('/api/feed/queue'), env });
+    expect((fetcher.mock.calls[0][0] as Request).url).toBe(`${api}/feed/queue`);
+    fetcher.mockRestore();
+  });
+});

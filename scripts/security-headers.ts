@@ -56,7 +56,8 @@ export function securityHeaders(): Plugin {
           "font-src 'self'",
           `img-src 'self' blob: https: ${apiOrigin}${proxyOrigin ? ` ${proxyOrigin}` : ''}`,
           `media-src 'self' blob: https: ${apiOrigin}`,
-          `connect-src 'self' ${apiOrigin} https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com`,
+          // API calls go through the same-origin /api proxy; only Firebase push is external.
+          "connect-src 'self' https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com",
           "worker-src 'self'",
           "object-src 'none'",
           "base-uri 'none'",

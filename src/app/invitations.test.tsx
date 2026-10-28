@@ -2,11 +2,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { renderApp as render } from './render-app.test-utils';
+import { renderApp as render, apiPath } from './render-app.test-utils';
 import { App } from './App';
 import { invitationUrl } from '../shared/links';
 
-const auth = { id: 1, token: 'test-account-token', accessHash: 'test-account-hash' };
+const auth = { id: 1, accessHash: 'test-account-hash' };
 const reference = 'add/2/test-invitation';
 const invitedPath = `/invite#?reference=${encodeURIComponent(reference)}`;
 const json = (data: unknown) => new Response(JSON.stringify(data));
@@ -14,6 +14,7 @@ const json = (data: unknown) => new Response(JSON.stringify(data));
 afterEach(() => {
   cleanup();
   sessionStorage.clear();
+  localStorage.clear();
   history.replaceState(null, '', '/');
   vi.unstubAllGlobals();
 });
@@ -22,7 +23,7 @@ function backend(
   accept: (options?: RequestInit) => Promise<Response> = async () => json({ type: 'Success' }),
 ) {
   const fetcher = vi.fn<typeof fetch>(async (url, options) => {
-    const path = new URL(String(url)).pathname;
+    const path = apiPath(url);
     if (path === '/activity/list') return json({ data: [], nextId: null });
     if (path === '/auth/logout') return json({});
     if (path === '/auth/email') return new Response(null);
@@ -40,7 +41,7 @@ function backend(
 const adds = (fetcher: ReturnType<typeof backend>) =>
   fetcher.mock.calls.filter(([url]) => String(url).endsWith('/friends/add'));
 const activityLoads = (fetcher: ReturnType<typeof backend>) =>
-  fetcher.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/activity/list').length;
+  fetcher.mock.calls.filter(([url]) => apiPath(url) === '/activity/list').length;
 
 async function signIn(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText('Email address'), 'friend@example.test');
@@ -88,7 +89,8 @@ describe('public entry and real invitations', () => {
       const request = adds(fetcher)[0][1]!;
       expect(request.method).toBe('POST');
       expect(JSON.parse(String(request.body))).toEqual({ userId: 2, token: 'test-invitation' });
-      expect(new Headers(request.headers).get('X-Token')).toBe(auth.token);
+      expect(new Headers(request.headers).get('X-User-Id')).toBe(String(auth.id));
+      expect(new Headers(request.headers).get('X-Token')).toBeNull();
       expect(adds(fetcher)).toHaveLength(1);
       expect(
         (screen.getByRole('button', { name: 'Invitation accepted' }) as HTMLButtonElement).disabled,
@@ -112,11 +114,11 @@ describe('public entry and real invitations', () => {
     await user.click(screen.getByRole('button', { name: 'Accept invitation' }));
     await screen.findByText('All set. You are now friends.');
     expect(activityLoads(fetcher)).toBeGreaterThan(loadsBeforeAccept);
-    expect(sessionStorage.getItem('friendly.session.v1')).toContain(auth.token);
+    expect(JSON.parse(localStorage.getItem('friendly.session.v2')!)).toEqual(auth);
   });
 
   it('generates and replaces real invitations pointing back to this client', async () => {
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
     history.replaceState(null, '', '/invite');
     const fetcher = backend();
     const user = userEvent.setup();
@@ -146,7 +148,7 @@ describe('public entry and real invitations', () => {
     expect(screen.getByRole('heading', { name: 'This invitation is not valid' })).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'Create account' })).toBeNull();
     view.unmount();
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
     history.replaceState(null, '', '/invite#?reference=add%2F1%2Ftest-own-invitation');
     render(<App />);
     await user.click(await screen.findByRole('button', { name: 'Accept invitation' }));
@@ -157,7 +159,7 @@ describe('public entry and real invitations', () => {
   it.each(['expired', 'offline'])(
     'keeps the invitation after an %s response and supports retry',
     async (failure) => {
-      sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+      localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
       history.replaceState(null, '', invitedPath);
       let attempts = 0;
       const fetcher = backend(async () => {
@@ -183,7 +185,7 @@ describe('public entry and real invitations', () => {
   it.each(['leave', 'logout'])(
     'aborts a pending invitation acceptance on %s and ignores late success',
     async (action) => {
-      sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+      localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
       history.replaceState(null, '', invitedPath);
       let signal: AbortSignal | undefined;
       let finish: ((response: Response) => void) | undefined;
@@ -212,7 +214,7 @@ describe('public entry and real invitations', () => {
   );
 
   it('keeps an invitation and asks for sign-in when acceptance expires the session', async () => {
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
     history.replaceState(null, '', invitedPath);
     backend(async () => new Response(null, { status: 401 }));
     const user = userEvent.setup();
@@ -220,7 +222,7 @@ describe('public entry and real invitations', () => {
     await user.click(await screen.findByRole('button', { name: 'Accept invitation' }));
     await screen.findByRole('heading', { name: 'A friend invited you to Friendly' });
     expect(screen.getByText('Your session has ended. Please sign in again.')).toBeTruthy();
-    expect(sessionStorage.getItem('friendly.session.v1')).toBeNull();
+    expect(localStorage.getItem('friendly.session.v2')).toBeNull();
     expect(location.pathname + location.hash).toBe(invitedPath);
     expect(screen.queryByRole('navigation')).toBeNull();
     await user.click(screen.getByRole('link', { name: 'Sign in' }));
@@ -228,13 +230,13 @@ describe('public entry and real invitations', () => {
   });
 
   it('retries invitation generation and keeps the existing link after a failed replacement', async () => {
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
     history.replaceState(null, '', '/invite');
     const fetcher = backend();
     const respond = fetcher.getMockImplementation()!;
     let failed = false;
     fetcher.mockImplementation(async (url, options) => {
-      const path = new URL(String(url)).pathname;
+      const path = apiPath(url);
       if (path === '/friends/generate' && !failed) {
         failed = true;
         return new Response(null, { status: 403 });
@@ -258,7 +260,7 @@ describe('public entry and real invitations', () => {
   });
 
   it('replaces the incoming invitation when navigation changes its fragment', async () => {
-    sessionStorage.setItem('friendly.session.v1', JSON.stringify(auth));
+    localStorage.setItem('friendly.session.v2', JSON.stringify(auth));
     history.replaceState(null, '', invitedPath);
     const fetcher = backend();
     const user = userEvent.setup();
