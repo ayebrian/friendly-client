@@ -39,6 +39,8 @@ function backend(
 
 const adds = (fetcher: ReturnType<typeof backend>) =>
   fetcher.mock.calls.filter(([url]) => String(url).endsWith('/friends/add'));
+const activityLoads = (fetcher: ReturnType<typeof backend>) =>
+  fetcher.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/activity/list').length;
 
 async function signIn(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText('Email address'), 'friend@example.test');
@@ -105,8 +107,11 @@ describe('public entry and real invitations', () => {
     await user.click(screen.getByRole('button', { name: 'Create account' }));
     await screen.findByRole('heading', { name: 'Accept your invitation' });
     expect(adds(fetcher)).toHaveLength(0);
+    await waitFor(() => expect(activityLoads(fetcher)).toBeGreaterThan(0));
+    const loadsBeforeAccept = activityLoads(fetcher);
     await user.click(screen.getByRole('button', { name: 'Accept invitation' }));
     await screen.findByText('All set. You are now friends.');
+    expect(activityLoads(fetcher)).toBeGreaterThan(loadsBeforeAccept);
     expect(sessionStorage.getItem('friendly.session.v1')).toContain(auth.token);
   });
 
