@@ -732,3 +732,131 @@ describe('client routes', () => {
     );
   });
 });
+
+describe('auth namespace and sign-in body', () => {
+  it.each([
+    '/api/auth/login.',
+    '/api/auth/login~',
+    '/api/auth/generate.',
+    '/api/auth/login/x',
+    '/api/auth/unknown',
+    '/api/auth',
+  ])('answers %s locally with 404', async (path) => {
+    const fetcher = upstream(() => json({ ...account, token: secret }));
+    const response = await handleApiRequest(request(path, { method: 'POST', body: '{}' }), env, {
+      fetch: fetcher,
+    });
+    expect(response.status).toBe(404);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('still forwards the other backend auth routes', async () => {
+    const fetcher = upstream(() => json({}));
+    for (const path of ['/api/auth/email', '/api/auth/firebase', '/api/auth/logout'])
+      await handleApiRequest(request(path, { method: 'POST', body: '{}' }), env, {
+        fetch: fetcher,
+      });
+    expect(fetcher.mock.calls.map(([input]) => new URL((input as Request).url).pathname)).toEqual([
+      '/auth/email',
+      '/auth/firebase',
+      '/auth/logout',
+    ]);
+  });
+
+  it('refuses OPTIONS on the sign-in paths', async () => {
+    const fetcher = upstream(() => json({ ...account, token: secret }));
+    for (const path of ['/api/auth/login', '/api/auth/generate']) {
+      const response = await handleApiRequest(request(path, { method: 'OPTIONS' }), env, {
+        fetch: fetcher,
+      });
+      expect(response.status).toBe(405);
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('returns only id and accessHash from a sign-in response', async () => {
+    const fetcher = upstream(() =>
+      json({ ...account, token: secret, refresh: secret, extra: { token: secret } }),
+    );
+    const response = await handleApiRequest(
+      request('/api/auth/generate', { method: 'POST', body: '{}' }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).not.toContain(secret);
+    expect(JSON.parse(text)).toEqual(account);
+  });
+
+  it('refuses a sign-in response without an access hash', async () => {
+    const fetcher = upstream(() => json({ id: 42, token: secret }));
+    const response = await handleApiRequest(
+      request('/api/auth/login', { method: 'POST', body: '{}' }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(response.status).toBe(502);
+    expect(await response.text()).not.toContain(secret);
+    expect(response.headers.get('Set-Cookie')).toBeNull();
+  });
+});
+
+describe('sign-in spellings against a lenient backend router', () => {
+  // A deliberately lenient model of the backend router: it skips empty segments,
+  // percent-decodes each segment and ignores case, so it runs sign-in for more spellings than
+  // Ktor does. Whatever spelling reaches it, the token must never come back in a body.
+  function runsSignIn(url: string) {
+    const segments = new URL(url).pathname
+      .split('/')
+      .filter(Boolean)
+      .map((segment) => {
+        try {
+          return decodeURIComponent(segment).toLowerCase();
+        } catch {
+          return segment;
+        }
+      });
+    return (
+      segments.length === 2 &&
+      segments[0] === 'auth' &&
+      (segments[1] === 'login' || segments[1] === 'generate')
+    );
+  }
+  const namespaces = ['auth', 'Auth', 'AUTH', '%61uth', 'a%75th', '%41uth'];
+  const names = ['login', 'Login', '%6cogin', 'LOGIN', 'generate', 'Generate', '%67enerate'];
+  const separators = ['/', '//', '/./', '/x/../', '%2F', '%2f', '/%2e/', '\\'];
+  const endings = ['', '/', '//', '/.', '?x=1', '%2F', '%00', ';x=1', '#x'];
+  const methods = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];
+
+  it('never returns the token in a response body', async () => {
+    const backend = vi.fn<typeof fetch>(async (input) =>
+      runsSignIn((input as Request).url) ? json({ ...account, token: secret }) : json({}),
+    );
+    let requests = 0;
+    for (const namespace of namespaces)
+      for (const name of names)
+        for (const separator of separators)
+          for (const ending of endings)
+            for (const method of methods) {
+              const path = `/api/${namespace}${separator}${name}${ending}`;
+              const response = await handleApiRequest(
+                request(path, { method, ...(SAFE.has(method) ? {} : { body: '{}' }) }),
+                env,
+                { fetch: backend },
+              );
+              requests++;
+              expect(await response.text(), `${method} ${path}`).not.toContain(secret);
+            }
+    expect(requests).toBe(
+      namespaces.length * names.length * separators.length * endings.length * methods.length,
+    );
+    // Only spellings that the URL parser itself turns into /auth/login or /auth/generate reach
+    // the backend as sign-ins, and those go through the cookie path.
+    for (const [input] of backend.mock.calls) {
+      const forwarded = new URL((input as Request).url);
+      if (runsSignIn(forwarded.href))
+        expect(['/auth/login', '/auth/generate']).toContain(forwarded.pathname);
+    }
+  });
+});
