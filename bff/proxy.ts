@@ -43,6 +43,17 @@ const REQUEST_HEADERS = [
 ];
 const RESPONSE_HEADERS = ['content-type', 'content-disposition', 'content-language', 'retry-after'];
 const SIGN_IN_PATHS = new Set(['/auth/login', '/auth/generate']);
+// The backend's auth routes; any other path under /auth (`/auth/login.`, `/auth/x`) stays local.
+const AUTH_PATHS = new Set([...SIGN_IN_PATHS, '/auth/logout', '/auth/email', '/auth/firebase']);
+const AUTH_NAMESPACE = /^\/auth(?:\/|$)/;
+// The only path spelling the proxy forwards: non-empty segments of RFC 3986 unreserved
+// characters. No `//`, no trailing `/`, no percent-encoding, no `;` parameters. Every backend
+// route and identifier (numeric ids, access hashes, cursors) fits; any other spelling could
+// reach a backend route under a name that the exact-match checks below would miss.
+const CANONICAL_PATH = /^(?:\/[A-Za-z0-9._~-]+)+$/;
+const DOT_SEGMENT = /\/\.\.?(?:\/|$)/;
+// Namespaces whose routes the proxy treats specially; only their lowercase spelling is served.
+const RESERVED_NAMESPACE = /^\/(?:auth|_session)(?:\/|$)/i;
 const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
 const MAX_MIGRATION_BODY = 4096;
 
@@ -61,6 +72,12 @@ export async function handleApiRequest(
     return failure(404, 'not_found');
   const path = url.pathname.slice('/api'.length);
   if (!ALLOWED_METHODS.has(request.method)) return failure(405, 'method_not_allowed');
+  // The sign-in, sign-out and session checks compare exact strings, so a path is served only
+  // in its canonical spelling and a sign-in response can never bypass signIn() below.
+  if (!isCanonicalPath(path)) return failure(400, 'bad_path');
+  if (AUTH_NAMESPACE.test(path) && !AUTH_PATHS.has(path)) return failure(404, 'not_found');
+  if (SIGN_IN_PATHS.has(path) && request.method !== 'POST')
+    return failure(405, 'method_not_allowed');
   // Defence in depth next to SameSite=Strict: state changes must come from this origin.
   // Browsers always send Origin on non-GET fetches, including same-origin ones.
   if (!SAFE_METHODS.has(request.method) && request.headers.get('Origin') !== url.origin)
@@ -126,7 +143,7 @@ export async function handleApiRequest(
 
 /**
  * Moves the token from a sign-in response into the account's cookie, removes the cookies of
- * other accounts and returns the rest of the body.
+ * other accounts and returns only the account (`id`, `accessHash`) to the page.
  */
 async function signIn(upstream: Response, previous: Session[]): Promise<Response> {
   let body: unknown;
@@ -135,11 +152,16 @@ async function signIn(upstream: Response, previous: Session[]): Promise<Response
   } catch {
     return failure(502, 'bad_upstream_response');
   }
-  if (!isRecord(body) || !isUserId(body.id) || !isToken(body.token))
+  if (
+    !isRecord(body) ||
+    !isUserId(body.id) ||
+    !isToken(body.token) ||
+    typeof body.accessHash !== 'string' ||
+    !body.accessHash
+  )
     return failure(502, 'bad_upstream_response');
-  const { token, ...account } = body;
-  const response = json(upstream.status, account);
-  response.headers.append('Set-Cookie', sessionCookie({ id: body.id, token }));
+  const response = json(upstream.status, { id: body.id, accessHash: body.accessHash });
+  response.headers.append('Set-Cookie', sessionCookie({ id: body.id, token: body.token }));
   for (const session of previous)
     if (session.id !== body.id) response.headers.append('Set-Cookie', clearCookie(session.id));
   return response;
@@ -232,6 +254,14 @@ function forward(upstream: Response): Response {
     status: upstream.status,
     headers,
   });
+}
+
+function isCanonicalPath(path: string) {
+  return (
+    CANONICAL_PATH.test(path) &&
+    !DOT_SEGMENT.test(path) &&
+    !(RESERVED_NAMESPACE.test(path) && path !== path.toLowerCase())
+  );
 }
 
 function apiOrigin(env: BffEnv): URL {

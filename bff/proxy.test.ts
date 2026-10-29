@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { handleApiRequest, readSessions, SESSION_COOKIE_PREFIX } from './proxy';
 import { onRequest } from '../functions/api/[[path]]';
+import { createFriendlyGateway } from '../src/infrastructure/friendly-gateway';
 
 const origin = 'https://friendly.example';
 const api = 'https://api.example';
@@ -36,6 +37,7 @@ function sent(fetcher: ReturnType<typeof upstream>, index = 0) {
 }
 
 const json = (body: unknown, init?: ResponseInit) => new Response(JSON.stringify(body), init);
+const SAFE = new Set(['GET', 'HEAD']);
 
 describe('sign-in', () => {
   it.each(['/auth/login', '/auth/generate'])(
@@ -112,6 +114,168 @@ describe('sign-in', () => {
   });
 });
 
+describe('path canonicalization', () => {
+  // The fake backend answers every path like a sign-in, so a forwarded request would leak it.
+  const leaky = () => upstream(() => json({ ...account, token: secret }));
+  const signInBody = { headers: { 'Content-Type': 'application/json' }, body: '{}' };
+
+  it.each([
+    '/api/auth/login/',
+    '/api/auth//login',
+    '/api//auth/login',
+    '/api/Auth/Login',
+    '/api/AUTH/LOGIN',
+    '/api/auth/Generate',
+    '/api/auth/%6cogin',
+    '/api/%61uth/login',
+    '/api/auth%2Flogin',
+    '/api/auth%2flogin',
+    '/api/auth/login%2F',
+    '/api/auth/login%00',
+    '/api/auth/login;jsessionid=1',
+    '/api/auth/generate/',
+    '/api/auth/generate//',
+    '/api/auth/%67enerate',
+  ])('rejects POST %s with 400 without calling the backend', async (path) => {
+    const fetcher = leaky();
+    const response = await handleApiRequest(request(path, { method: 'POST', ...signInBody }), env, {
+      fetch: fetcher,
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'bad_path' });
+    expect(response.headers.get('Set-Cookie')).toBeNull();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it.each(['GET', 'HEAD', 'PUT', 'PATCH', 'DELETE'])(
+    'refuses %s on the sign-in paths with 405 without calling the backend',
+    async (method) => {
+      for (const path of [
+        '/api/auth/login',
+        '/api/auth/login?email=test@example.test&code=1',
+        '/api/auth/generate',
+        '/api/auth/generate?nickname=x',
+      ]) {
+        const fetcher = leaky();
+        const response = await handleApiRequest(
+          request(path, { method, ...(SAFE.has(method) ? {} : signInBody) }),
+          env,
+          { fetch: fetcher },
+        );
+        expect(response.status).toBe(405);
+        expect(await response.text()).not.toContain(secret);
+        expect(response.headers.get('Set-Cookie')).toBeNull();
+        expect(fetcher).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it.each([
+    '/api/auth/login?next=1',
+    '/api/auth/./login',
+    '/api/auth/x/../login',
+    '/api/auth/%2e/login',
+    '/api/x/%2E%2E/auth/generate',
+    '/api/auth\\login',
+  ])('treats %s, which the URL parser resolves to a sign-in path, as a sign-in', async (path) => {
+    const fetcher = leaky();
+    const response = await handleApiRequest(request(path, { method: 'POST', ...signInBody }), env, {
+      fetch: fetcher,
+    });
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).not.toContain(secret);
+    expect(JSON.parse(text)).toEqual(account);
+    expect(response.headers.get('Set-Cookie')).toMatch(
+      new RegExp(`^${SESSION_COOKIE_PREFIX}42=[A-Za-z0-9_-]+;`),
+    );
+  });
+
+  it('rejects percent-encoding, empty segments and session namespace variants anywhere', async () => {
+    const fetcher = leaky();
+    for (const path of [
+      '/api/community/list/a%2Fb',
+      '/api/users/details2/42/hash%20x',
+      '/api/feed/queue/',
+      '/api/feed//queue',
+      '/api/_Session/migrate',
+      '/api/_SESSION/other',
+      '/api/users/details2/42/a:b',
+      '/api/users/details2/42/a@b',
+    ]) {
+      const response = await handleApiRequest(request(path, { headers: signedIn }), env, {
+        fetch: fetcher,
+      });
+      expect(response.status, path).toBe(400);
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('rejects sign-out and migration variants without touching the cookie', async () => {
+    const fetcher = leaky();
+    for (const path of [
+      '/api/auth/logout/',
+      '/api/Auth/Logout',
+      '/api/auth/%6cogout',
+      '/api/_session/migrate/',
+      '/api/_Session/Migrate',
+    ]) {
+      const response = await handleApiRequest(
+        request(path, { method: 'POST', headers: { ...signedIn, 'X-User-Id': '42' }, body: '{}' }),
+        env,
+        { fetch: fetcher },
+      );
+      expect(response.status, path).toBe(400);
+      expect(response.headers.get('Set-Cookie'), path).toBeNull();
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed path before the Origin check without calling the backend', async () => {
+    const fetcher = leaky();
+    const response = await handleApiRequest(
+      request('/api/auth/login/', {
+        method: 'POST',
+        headers: { Origin: 'https://evil.example' },
+        body: '{}',
+      }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(response.status).toBe(400);
+    expect(await response.text()).not.toContain(secret);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('still forwards ids and mixed-case access hashes outside the reserved namespaces', async () => {
+    const fetcher = upstream(() => json({}));
+    const hash = 'AbC.d~e_f-G9';
+    const response = await handleApiRequest(
+      request(`/api/users/details2/42/${hash}`, { headers: { ...signedIn, 'X-User-Id': '42' } }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(response.status).toBe(200);
+    expect(sent(fetcher).url).toBe(`${api}/users/details2/42/${hash}`);
+  });
+
+  it('passes an invite token from /friends/generate through unchanged', async () => {
+    const fetcher = upstream(() => json({ token: 'invite-token' }));
+    const response = await handleApiRequest(
+      request('/api/friends/generate', {
+        method: 'POST',
+        headers: { ...signedIn, 'X-User-Id': '42' },
+        body: '{}',
+      }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ token: 'invite-token' });
+    expect(response.headers.get('Set-Cookie')).toBeNull();
+  });
+});
+
 describe('authenticated proxying', () => {
   it('adds the backend headers from the cookie and forwards only allowed headers', async () => {
     const fetcher = upstream(() =>
@@ -129,7 +293,7 @@ describe('authenticated proxying', () => {
       ),
     );
     const response = await handleApiRequest(
-      request('/api/community/list/a%2Fb?x=1', {
+      request('/api/community/list/123?x=1', {
         headers: {
           ...signedIn,
           'X-User-Id': '42',
@@ -144,7 +308,7 @@ describe('authenticated proxying', () => {
       { fetch: fetcher },
     );
     const forwarded = sent(fetcher);
-    expect(forwarded.url).toBe(`${api}/community/list/a%2Fb?x=1`);
+    expect(forwarded.url).toBe(`${api}/community/list/123?x=1`);
     expect(forwarded.headers.get('X-Token')).toBe(secret);
     expect(forwarded.headers.get('X-User-Id')).toBe('42');
     expect(forwarded.headers.get('X-Locale')).toBe('ru');
@@ -275,7 +439,10 @@ describe('authenticated proxying', () => {
 
   it('keeps every request on the configured API origin', async () => {
     const fetcher = upstream(() => json({}));
-    await handleApiRequest(request('/api//evil.example/x'), env, { fetch: fetcher });
+    const outside = await handleApiRequest(request('/api//evil.example/x'), env, {
+      fetch: fetcher,
+    });
+    expect(outside.status).toBe(400);
     await handleApiRequest(request('/api/../../x'), env, { fetch: fetcher });
     for (const [input] of fetcher.mock.calls)
       expect(new URL((input as Request).url).origin).toBe(api);
@@ -491,5 +658,205 @@ describe('Pages Function entry', () => {
     await onRequest({ request: request('/api/feed/queue'), env });
     expect((fetcher.mock.calls[0][0] as Request).url).toBe(`${api}/feed/queue`);
     fetcher.mockRestore();
+  });
+});
+
+describe('client routes', () => {
+  it('serves every request the gateway sends without rejecting its path', async () => {
+    // Real identifiers: numeric ids and cursors, 256-character access hashes.
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-.~';
+    const hash = Array.from({ length: 256 }, (_, i) => alphabet[(i * 7) % alphabet.length]).join(
+      '',
+    );
+    const backend = upstream(() => json({ ...account, token: secret }));
+    const statuses: number[] = [];
+    const gateway = createFriendlyGateway({
+      baseUrl: '/api',
+      userId: 42,
+      fetcher: async (input, init) => {
+        const method = init?.method ?? 'GET';
+        const headers = new Headers(init?.headers);
+        headers.set('Cookie', signedIn.Cookie);
+        if (!SAFE.has(method)) headers.set('Origin', origin);
+        const response = await handleApiRequest(
+          new Request(`${origin}${String(input)}`, { ...init, headers }),
+          env,
+          { fetch: backend },
+        );
+        statuses.push(response.status);
+        return response;
+      },
+    });
+    const file = new File(['x'], 'photo.png', { type: 'image/png' });
+    const calls: (() => Promise<unknown>)[] = [
+      () => gateway.sendLoginCode('test@example.test'),
+      () => gateway.login('test@example.test', '12345678'),
+      () => gateway.register({ nickname: 'n', description: 'd', interests: [] } as never),
+      () => gateway.profile(),
+      () => gateway.person(7, hash),
+      () => gateway.editProfile({ nickname: 'n' } as never),
+      () => gateway.uploadAvatar(file, true),
+      () => gateway.uploadAvatar(file, false),
+      () => gateway.uploadMedia(file),
+      () => gateway.friends(),
+      () => gateway.discover(),
+      () => gateway.requestFriend(7, hash),
+      () => gateway.declineFriend(7, hash),
+      () => gateway.invitation(false),
+      () => gateway.invitation(true),
+      () => gateway.acceptInvitation(7, 'invite-token'),
+      () => gateway.linkEmail('test@example.test'),
+      () => gateway.confirmEmail('123456'),
+      () => gateway.unlinkEmail(),
+      () => gateway.registerPush('push-token'),
+      () => gateway.posts(null),
+      () => gateway.posts('123'),
+      () => gateway.publish('text'),
+      () => gateway.editPost(5, 'text'),
+      () => gateway.deletePost(5),
+      () => gateway.activityPage(null),
+      () => gateway.activityPage('123'),
+      () => gateway.readActivity(9),
+      () => gateway.thread(5, hash),
+      () => gateway.replies(5, hash, null),
+      () => gateway.replies(5, hash, '123'),
+      () => gateway.logout(),
+    ];
+    // The fake backend's answer does not fit most schemas; only the routing matters here.
+    for (const call of calls) await call().catch(() => {});
+    expect(statuses).toHaveLength(calls.length);
+    expect(statuses.filter((status) => [400, 403, 405].includes(status))).toEqual([]);
+    expect(backend).toHaveBeenCalledTimes(calls.length);
+    expect(backend.mock.calls.map(([input]) => new URL((input as Request).url).pathname)).toContain(
+      `/community/5/${hash}/replies2`,
+    );
+  });
+});
+
+describe('auth namespace and sign-in body', () => {
+  it.each([
+    '/api/auth/login.',
+    '/api/auth/login~',
+    '/api/auth/generate.',
+    '/api/auth/login/x',
+    '/api/auth/unknown',
+    '/api/auth',
+  ])('answers %s locally with 404', async (path) => {
+    const fetcher = upstream(() => json({ ...account, token: secret }));
+    const response = await handleApiRequest(request(path, { method: 'POST', body: '{}' }), env, {
+      fetch: fetcher,
+    });
+    expect(response.status).toBe(404);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('still forwards the other backend auth routes', async () => {
+    const fetcher = upstream(() => json({}));
+    for (const path of ['/api/auth/email', '/api/auth/firebase', '/api/auth/logout'])
+      await handleApiRequest(request(path, { method: 'POST', body: '{}' }), env, {
+        fetch: fetcher,
+      });
+    expect(fetcher.mock.calls.map(([input]) => new URL((input as Request).url).pathname)).toEqual([
+      '/auth/email',
+      '/auth/firebase',
+      '/auth/logout',
+    ]);
+  });
+
+  it('refuses OPTIONS on the sign-in paths', async () => {
+    const fetcher = upstream(() => json({ ...account, token: secret }));
+    for (const path of ['/api/auth/login', '/api/auth/generate']) {
+      const response = await handleApiRequest(request(path, { method: 'OPTIONS' }), env, {
+        fetch: fetcher,
+      });
+      expect(response.status).toBe(405);
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('returns only id and accessHash from a sign-in response', async () => {
+    const fetcher = upstream(() =>
+      json({ ...account, token: secret, refresh: secret, extra: { token: secret } }),
+    );
+    const response = await handleApiRequest(
+      request('/api/auth/generate', { method: 'POST', body: '{}' }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).not.toContain(secret);
+    expect(JSON.parse(text)).toEqual(account);
+  });
+
+  it('refuses a sign-in response without an access hash', async () => {
+    const fetcher = upstream(() => json({ id: 42, token: secret }));
+    const response = await handleApiRequest(
+      request('/api/auth/login', { method: 'POST', body: '{}' }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(response.status).toBe(502);
+    expect(await response.text()).not.toContain(secret);
+    expect(response.headers.get('Set-Cookie')).toBeNull();
+  });
+});
+
+describe('sign-in spellings against a lenient backend router', () => {
+  // A deliberately lenient model of the backend router: it skips empty segments,
+  // percent-decodes each segment and ignores case, so it runs sign-in for more spellings than
+  // Ktor does. Whatever spelling reaches it, the token must never come back in a body.
+  function runsSignIn(url: string) {
+    const segments = new URL(url).pathname
+      .split('/')
+      .filter(Boolean)
+      .map((segment) => {
+        try {
+          return decodeURIComponent(segment).toLowerCase();
+        } catch {
+          return segment;
+        }
+      });
+    return (
+      segments.length === 2 &&
+      segments[0] === 'auth' &&
+      (segments[1] === 'login' || segments[1] === 'generate')
+    );
+  }
+  const namespaces = ['auth', 'Auth', 'AUTH', '%61uth', 'a%75th', '%41uth'];
+  const names = ['login', 'Login', '%6cogin', 'LOGIN', 'generate', 'Generate', '%67enerate'];
+  const separators = ['/', '//', '/./', '/x/../', '%2F', '%2f', '/%2e/', '\\'];
+  const endings = ['', '/', '//', '/.', '?x=1', '%2F', '%00', ';x=1', '#x'];
+  const methods = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];
+
+  it('never returns the token in a response body', async () => {
+    const backend = vi.fn<typeof fetch>(async (input) =>
+      runsSignIn((input as Request).url) ? json({ ...account, token: secret }) : json({}),
+    );
+    let requests = 0;
+    for (const namespace of namespaces)
+      for (const name of names)
+        for (const separator of separators)
+          for (const ending of endings)
+            for (const method of methods) {
+              const path = `/api/${namespace}${separator}${name}${ending}`;
+              const response = await handleApiRequest(
+                request(path, { method, ...(SAFE.has(method) ? {} : { body: '{}' }) }),
+                env,
+                { fetch: backend },
+              );
+              requests++;
+              expect(await response.text(), `${method} ${path}`).not.toContain(secret);
+            }
+    expect(requests).toBe(
+      namespaces.length * names.length * separators.length * endings.length * methods.length,
+    );
+    // Only spellings that the URL parser itself turns into /auth/login or /auth/generate reach
+    // the backend as sign-ins, and those go through the cookie path.
+    for (const [input] of backend.mock.calls) {
+      const forwarded = new URL((input as Request).url);
+      if (runsSignIn(forwarded.href))
+        expect(['/auth/login', '/auth/generate']).toContain(forwarded.pathname);
+    }
   });
 });
