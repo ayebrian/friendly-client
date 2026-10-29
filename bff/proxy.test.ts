@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { handleApiRequest, readSessions, SESSION_COOKIE_PREFIX } from './proxy';
 import { onRequest } from '../functions/api/[[path]]';
+import { createFriendlyGateway } from '../src/infrastructure/friendly-gateway';
 
 const origin = 'https://friendly.example';
 const api = 'https://api.example';
@@ -175,6 +176,7 @@ describe('path canonicalization', () => {
     '/api/auth/x/../login',
     '/api/auth/%2e/login',
     '/api/x/%2E%2E/auth/generate',
+    '/api/auth\\login',
   ])('treats %s, which the URL parser resolves to a sign-in path, as a sign-in', async (path) => {
     const fetcher = leaky();
     const response = await handleApiRequest(request(path, { method: 'POST', ...signInBody }), env, {
@@ -206,6 +208,42 @@ describe('path canonicalization', () => {
       });
       expect(response.status, path).toBe(400);
     }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('rejects sign-out and migration variants without touching the cookie', async () => {
+    const fetcher = leaky();
+    for (const path of [
+      '/api/auth/logout/',
+      '/api/Auth/Logout',
+      '/api/auth/%6cogout',
+      '/api/_session/migrate/',
+      '/api/_Session/Migrate',
+    ]) {
+      const response = await handleApiRequest(
+        request(path, { method: 'POST', headers: { ...signedIn, 'X-User-Id': '42' }, body: '{}' }),
+        env,
+        { fetch: fetcher },
+      );
+      expect(response.status, path).toBe(400);
+      expect(response.headers.get('Set-Cookie'), path).toBeNull();
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed path before the Origin check without calling the backend', async () => {
+    const fetcher = leaky();
+    const response = await handleApiRequest(
+      request('/api/auth/login/', {
+        method: 'POST',
+        headers: { Origin: 'https://evil.example' },
+        body: '{}',
+      }),
+      env,
+      { fetch: fetcher },
+    );
+    expect(response.status).toBe(400);
+    expect(await response.text()).not.toContain(secret);
     expect(fetcher).not.toHaveBeenCalled();
   });
 
@@ -620,5 +658,77 @@ describe('Pages Function entry', () => {
     await onRequest({ request: request('/api/feed/queue'), env });
     expect((fetcher.mock.calls[0][0] as Request).url).toBe(`${api}/feed/queue`);
     fetcher.mockRestore();
+  });
+});
+
+describe('client routes', () => {
+  it('serves every request the gateway sends without rejecting its path', async () => {
+    // Real identifiers: numeric ids and cursors, 256-character access hashes.
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-.~';
+    const hash = Array.from({ length: 256 }, (_, i) => alphabet[(i * 7) % alphabet.length]).join(
+      '',
+    );
+    const backend = upstream(() => json({ ...account, token: secret }));
+    const statuses: number[] = [];
+    const gateway = createFriendlyGateway({
+      baseUrl: '/api',
+      userId: 42,
+      fetcher: async (input, init) => {
+        const method = init?.method ?? 'GET';
+        const headers = new Headers(init?.headers);
+        headers.set('Cookie', signedIn.Cookie);
+        if (!SAFE.has(method)) headers.set('Origin', origin);
+        const response = await handleApiRequest(
+          new Request(`${origin}${String(input)}`, { ...init, headers }),
+          env,
+          { fetch: backend },
+        );
+        statuses.push(response.status);
+        return response;
+      },
+    });
+    const file = new File(['x'], 'photo.png', { type: 'image/png' });
+    const calls: (() => Promise<unknown>)[] = [
+      () => gateway.sendLoginCode('test@example.test'),
+      () => gateway.login('test@example.test', '12345678'),
+      () => gateway.register({ nickname: 'n', description: 'd', interests: [] } as never),
+      () => gateway.profile(),
+      () => gateway.person(7, hash),
+      () => gateway.editProfile({ nickname: 'n' } as never),
+      () => gateway.uploadAvatar(file, true),
+      () => gateway.uploadAvatar(file, false),
+      () => gateway.uploadMedia(file),
+      () => gateway.friends(),
+      () => gateway.discover(),
+      () => gateway.requestFriend(7, hash),
+      () => gateway.declineFriend(7, hash),
+      () => gateway.invitation(false),
+      () => gateway.invitation(true),
+      () => gateway.acceptInvitation(7, 'invite-token'),
+      () => gateway.linkEmail('test@example.test'),
+      () => gateway.confirmEmail('123456'),
+      () => gateway.unlinkEmail(),
+      () => gateway.registerPush('push-token'),
+      () => gateway.posts(null),
+      () => gateway.posts('123'),
+      () => gateway.publish('text'),
+      () => gateway.editPost(5, 'text'),
+      () => gateway.deletePost(5),
+      () => gateway.activityPage(null),
+      () => gateway.activityPage('123'),
+      () => gateway.readActivity(9),
+      () => gateway.thread(5, hash),
+      () => gateway.replies(5, hash, null),
+      () => gateway.replies(5, hash, '123'),
+      () => gateway.logout(),
+    ];
+    // The fake backend's answer does not fit most schemas; only the routing matters here.
+    for (const call of calls) await call().catch(() => {});
+    expect(statuses).toHaveLength(calls.length);
+    expect(statuses.filter((status) => [400, 403, 405].includes(status))).toEqual([]);
+    expect(backend).toHaveBeenCalledTimes(calls.length);
+    expect(backend.mock.calls.map(([input]) => new URL((input as Request).url).pathname)).toContain(
+      `/community/5/${hash}/replies2`,
+    );
   });
 });

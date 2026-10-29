@@ -294,7 +294,7 @@ export function createFriendlyGateway(options: FriendlyGatewayOptions): Friendly
       const raw = parse(
         pageSchema,
         await request(
-          `/community/${postId}/${part(accessHash)}/replies2/${cursor ? part(cursor) : ''}`,
+          `/community/${postId}/${part(accessHash)}/replies2${cursor ? `/${part(cursor)}` : ''}`,
           { signal },
         ),
       );
